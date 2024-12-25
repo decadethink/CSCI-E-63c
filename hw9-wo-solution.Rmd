@@ -1,0 +1,354 @@
+---
+title: "CSCI E-63C Week 9 Problem Set by Ziqi Zhao"
+output:
+  html_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(cluster)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Preface
+
+For this problem set we will exercise some of the measures for evaluating "goodness of clustering" presented in the lecture this week on the clusters obtained for the World Health Statistics (WHS) dataset from week 8.  Please feel free to either adapt/reuse code presented in lecture slides as necessary or use implementations already available in R.  All problems presented below are expected to be performed on *scaled* WHS data -- if somewhere it is not mentioned explicitly, then please assume that it is still scaled data that should be used. 
+
+Lastly, as a dose of reality check: WHS is a dataset capturing variability of population health measures across more or less the entire diversity of societies in the world -- please be prepared to face the fact that resulting clustering structures are far from textbook perfect, they may not be very clearly defined, etc.
+
+## Note on quakes data (and *3 extra points per problem*) 
+
+As you will notice, WHS dataset does not have the most striking cluster structure to it, at least as far as few formal measurements of cluster strength that we are working with this week are concerned (or the very notion that there is a well defined "optimal" number of clusters that manifests itself in markedly "better" metrics compared to different cluster numbers). It's not an uncommon situation for the data we often have to work with.
+
+In this assignment we also offer you the opportunity to see the output of the code used/developed for problems in this set when applied to data with more distinct substructure (and to earn extra points by doing that!). Once you have generated required plots for WHS dataset in each of the five problems presented below (four required ones plus the extra points subsection), add the same kinds of plots but for a standard R dataset "quakes" and by doing that earn (up to) *3 extra points* for *each* problem (both for graduate and undergraduate credit).  Thus, if everything works perfectly this could add another 15 points to the total for this week (5 problems x 3 extra points each), so that along with the extra 5 points problem below, there is an opportunity of adding up to 20 extra points to this week total (both for graduate and undergraduate credit).
+
+Dataset "quakes" is routinely available in R and is autoloaded by default: the following should just work without any further steps for a standard R installation:
+
+```{r,fig.width=6,fig.height=6}
+clr <- gray((quakes$depth-min(quakes$depth))/as.vector(range(quakes$depth)%*%c(-1,1)))
+plot(quakes$lat,quakes$long,col=clr)
+```
+ 
+or, similarly, if you are a ggplot fan (in which case you will know to load ggplot2 library first):
+
+```{r,fig.width=6,fig.height=6}
+ggplot(quakes,aes(x=lat,y=long,colour=depth))+geom_point()
+```
+ 
+If you write your code with reusability in mind, applying it to "quakes" should be just a straightforward drop-in replacement of WHS data frame with that of "quakes".  You will see that the subclasses of observations are so well defined in "quakes" that it is almost boring in its own way.  Nothing is perfect in this world, but you should see more interesting behavior of CH index in this case, for example.
+
+To get the most (in terms of learning and points) out of this exercise (applying the same methods to two different datasets) please consider this as an opportunity to reflect on the differences in the behaviour / outcome of the same method when applied to two different datasets.  In particular, think about the following questions (you don't have to answer these in writing, specifically -- they are just to help you spot the differences and interpret them) :
+
+* What would be the behaviour of those metrics if the "true" number of clusters was two?
+* For the quakes dataset -- what subsets of observations correspond to the clusters found by K-means / hierarchical clustering?
+* Do they correspond to visually apparent groups of observations?  Quakes is relatively low dimensional dataset after all -- location in 3D and magnitude, plus number of stations highly correlated with magnitude.
+* How are those numbers of clusters reflected in the plots of "clustering strength" metrics (CH-index, gap statistic etc.)?
+* Are there any attributes in quakes dataset that are skewed enough to justify data transformation?  What would be an effect of that?
+* Back to WHS dataset -- what are the differences in the behavior of those metrics (CH-index, etc.) between quakes and WHS dataset?
+
+Once again, the complete answer to the extra points question does *not* have to include written answers to each (or any) of the specific questions asked above, but it should provide some form of the summary of the insights you have developed from comparing the results for these two datasets.
+
+# Problem 1: within/between cluster variation and CH-index (points: 15/20 – graduate/undergraduate)
+
+Present plots of CH-index as well as (total) within and between cluster variance provided by K-means clustering on scaled WHS data for 2 through 20 clusters.  Choose large enough value of `nstart` for better stability of the results across multiple trials and evaluate stability of those results across several runs.  Discuss the results and weigh on whether the shapes of the curves suggest specific number of clusters in the data.
+
+```{r p1}
+# Load required libraries
+library(cluster)
+library(factoextra)
+library(fpc)
+
+# Load the WHS dataset
+whs_data <- read.table("whs2018_annexB-subset-wo-NAs.txt", header = TRUE, sep = "\t")
+
+# Scale the data
+whs_data_scaled <- scale(whs_data)
+
+# Initialize a vector to store CH index values
+ch_index <- numeric(20)
+
+# Loop over a range of cluster numbers
+for (k in 2:20) {
+  # Perform K-means clustering
+  set.seed(123)  # For reproducibility
+  kmeans_model <- kmeans(whs_data_scaled, centers = k, nstart = 40)
+  
+  # Calculate CH index
+  ch_index[k] <- calinhara(whs_data_scaled, kmeans_model$cluster, cn = k)
+}
+
+# Plot the CH index against the number of clusters
+plot(2:20, ch_index[2:20], type = "b", xlab = "Number of Clusters", ylab = "CH Index",
+     main = "CH Index for WHS Data")
+
+# Initialize vectors to store within and between cluster variances
+within_variance <- numeric(19)
+between_variance <- numeric(19)
+
+# Calculate within and between variances for each number of clusters
+for (k in 2:20) {
+  # Perform K-means clustering
+  set.seed(123)  # For reproducibility
+  kmeans_model <- kmeans(whs_data_scaled, centers = k, nstart = 40)
+  
+  # Calculate within-cluster variance
+  within_variance[k - 1] <- sum(kmeans_model$withinss)
+  
+  # Calculate between-cluster variance
+  total_variance <- sum(apply(whs_data_scaled, 2, var)) * (nrow(whs_data_scaled) - 1)
+  between_variance[k - 1] <- total_variance - within_variance[k - 1]
+}
+
+# Plot within-cluster variance
+plot(2:20, within_variance, type = "b", col = "blue", xlab = "Number of Clusters (K)", 
+     ylab = "Within-Cluster Variance", main = "Within-Cluster Variance for K-means Clustering")
+
+# Plot between-cluster variance
+plot(2:20, between_variance, type = "b", col = "red", xlab = "Number of Clusters (K)", 
+     ylab = "Between-Cluster Variance", main = "Between-Cluster Variance for K-means Clustering")
+
+```
+**Discussion:**
+
+In the CH-Index plot, the CH index drops sharply from 2 to around 5 clusters, after which it gradually declines with smaller decreases. This pattern suggests that the data might not have a strong clustering structure beyond a few clusters. The rapid drop in the CH index indicates that a small number of clusters could capture most of the data's inherent structure.
+
+IF we observe within-cluster variance decreasing sharply up to around 5 clusters, it would align with the CH index trend, suggesting that beyond 5 clusters, adding more clusters only provides diminishing returns.
+
+with nstart=40 (large enough), the initialization should not matter much and the results should be stable. Thus, around 4-5 clusters as a reasonable balance between within- and between-cluster variance. Beyond this, the additional clusters might capture noise rather than meaningful structure.
+
+For within cluster: the within-cluster variance decreases as the number of clusters increases, which is expected because adding more clusters generally allows for finer partitioning of the data, reducing variance within each cluster.
+
+For between cluster: the between-cluster variance generally increases with the number of clusters for both methods, reflecting that more clusters capture distinct data partitions.
+
+# Problem 2: gap statistics (points: 15/20 – graduate/undergraduate)
+
+Using the code provided in the lecture slides for calculating gap statistics or one of its implementations available in R (e.g. `clusGap` from library `cluster`), compute and plot gap statistics for K-means clustering of the scaled WHS data for 2 through 20 clusters.  Discuss whether it indicates presence of clearly defined cluster structure in this data.
+
+```{r p2}
+# Calculate gap statistics for K-means clustering
+set.seed(123)  # For reproducibility
+gap_stat <- clusGap(whs_data_scaled, FUN = kmeans, nstart = 40, K.max = 20, B = 500)
+
+# Plot the gap statistics
+fviz_gap_stat(gap_stat)
+```
+**Discussion:**
+
+In the plot, the optimal number of clusters is suggested by the largest "jump" in value and a peak. Here, a vertical line is drawn at 3-4 clusters, suggesting that the Gap statistic identifies 4 as the optimal cluster count.
+
+After this point, the Gap statistic increases at a slower rate, indicating that additional clusters may not capture as distinct structure and could be fitting noise rather than meaningful patterns. This gradual change after 4 clusters reinforces the observation that the data likely has a more substantial underlying structure for a small number of clusters, while more clusters might overfit.
+
+The error bars are relatively small enough to be ignored in this particular case.
+
+
+# Problem 3: stability of hierarchical clustering (points: 15/20 – graduate/undergraduate)
+
+For numbers of clusters K=2, 3 and 4 found in the scaled WHS dataset by (1) `hclust` with Ward method (as obtained by `cutree` at corresponding levels of `k`) and (2) by K-means, compare cluster memberships between these two methods at each K and describe their concordance.  This problem is similar to the one from week 8 problem set, but this time it is *required* to: 1) use two dimensional contingency tables implemented by `table` to compare membership between two assignments of observations into clusters, and 2) programmatically re-order rows and columns in the `table` result to correctly identify the correspondence between the clusters (please see examples in lecture slides).
+
+```{r p3}
+library(clue) 
+
+# Function to reorder contingency table using Hungarian algorithm
+matrix.sort <- function(m) {
+  require(clue)
+  p <- solve_LSAP(m, maximum = TRUE)
+  m[, p]
+}
+
+# Function to compare clusters for different values of K
+compare_clusters <- function(K) {
+  # Hierarchical clustering using Ward's method
+  hclust_ward <- hclust(dist(whs_data_scaled), method = "ward.D2")
+  hier_clusters <- cutree(hclust_ward, k = K)
+  
+  # K-means clustering
+  kmeans_clusters <- kmeans(whs_data_scaled, centers = K, nstart = 100)
+  
+  # Create contingency table
+  comparison <- table(kmeans_clusters$cluster, hier_clusters)
+  
+  # Reorder the table for alignment of clusters
+  sorted_comparison <- matrix.sort(comparison)
+  
+  # Print the reordered contingency table for each K
+  cat("\nContingency table for K =", K, "\n")
+  print(sorted_comparison)
+}
+
+# Compare clusters for K = 2, 3, and 4
+for (K in 2:4) {
+  compare_clusters(K)
+}
+```
+**Discussion:**
+
+For K=2: The contingency table indicates that there’s a strong correspondence between the hierarchical and K-means clusters, as the vast majority of data points are aligned in similar clusters (124 in one cluster pair and 63 in another). This suggests that for K=2, both clustering methods identify a similar division in the data, indicating good agreement between these clustering techniques.
+
+For K=3: With 3 clusters, the alignment is less clear than for K=2. The distribution is slightly more spread across different cluster pairs, though the 71 cluster indicates some strong alignment. The variability suggests that K-means and hierarchical clustering are capturing slightly different structures within the data when three clusters are used, but there is still a recognizable pattern in cluster membership.
+
+For K=4: The distribution of points across clusters becomes more mixed, with smaller alignment among individual cluster pairs. This may imply that as the number of clusters increases, the two clustering methods diverge more in their partitioning of the data, which could indicate either more complex data structure or noise that each method handles differently. The 71 cluster is still present and nearly the same though so at K=4 results are still fairly strong.
+
+The agreement between hierarchical clustering and K-means clustering is relatively high at lower values of K (especially K=2), suggesting a simpler, more coherent underlying cluster structure for fewer clusters. As K increases to 4, the two methods align less closely, indicating that they may be capturing different nuances in the data or reacting differently to less defined structures within smaller clusters. 
+
+
+## For *extra* 5 points (graduate and undegraduate credit): between/within variance in hierarchical clusters
+
+Using functions `between` and `within` provided in the lecture slides calculate between and (total) within cluster variances for top 2 through 20 clusters defined by Ward's hierarchical clustering when applied to the scaled WHS data.  Plot the results.  Compare their behavior to that of the same statistics when obtained for K-means clustering above.
+
+```{r p3.5}
+# Define within and between functions
+within <- function(dat, clust) {
+  w <- numeric(length(unique(clust)))
+  for (i in sort(unique(clust))) {
+    members <- dat[clust == i, , drop = FALSE]
+    centroid <- colMeans(members)
+    members_diff <- sweep(members, 2, centroid)
+    w[i] <- sum(members_diff^2)
+  }
+  return(sum(w))
+}
+
+between <- function(dat, clust) {
+  total_mean <- colMeans(dat)
+  b <- 0
+  for (i in sort(unique(clust))) {
+    members <- dat[clust == i, , drop = FALSE]
+    centroid <- colMeans(members)
+    b <- b + nrow(members) * sum((centroid - total_mean)^2)
+  }
+  return(b)
+}
+
+# Initialize vectors to store within and between variances for hierarchical clustering
+within_hier <- numeric(19)
+between_hier <- numeric(19)
+
+# Hierarchical clustering with Ward's method
+hclust_ward <- hclust(dist(whs_data_scaled), method = "ward.D2")
+
+# Calculate within and between variances for hierarchical clustering for K = 2 through 20
+for (K in 2:20) {
+  hier_clusters <- cutree(hclust_ward, k = K)
+  within_hier[K - 1] <- within(whs_data_scaled, hier_clusters)
+  between_hier[K - 1] <- between(whs_data_scaled, hier_clusters)
+}
+
+# Initialize vectors to store within and between variances for K-means clustering
+within_kmeans <- numeric(19)
+between_kmeans <- numeric(19)
+
+# Calculate within and between variances for K-means clustering for K = 2 through 20
+for (K in 2:20) {
+  kmeans_model <- kmeans(whs_data_scaled, centers = K, nstart = 100)
+  within_kmeans[K - 1] <- within(whs_data_scaled, kmeans_model$cluster)
+  between_kmeans[K - 1] <- between(whs_data_scaled, kmeans_model$cluster)
+}
+
+# Plot within-cluster variances
+plot(2:20, within_hier, type = "b", col = "blue", xlab = "Number of Clusters (K)", ylab = "Within-Cluster Variance",
+     main = "Within-Cluster Variance for Hierarchical vs K-means Clustering")
+lines(2:20, within_kmeans, type = "b", col = "red")
+legend("topright", legend = c("Hierarchical", "K-means"), col = c("blue", "red"), lty = 1, pch = 1)
+
+# Plot between-cluster variances
+plot(2:20, between_hier, type = "b", col = "blue", xlab = "Number of Clusters (K)", ylab = "Between-Cluster Variance",
+     main = "Between-Cluster Variance for Hierarchical vs K-means Clustering")
+lines(2:20, between_kmeans, type = "b", col = "red")
+legend("topright", legend = c("Hierarchical", "K-means"), col = c("blue", "red"), lty = 1, pch = 1)
+```
+**Discussion:**
+
+1. Within-Cluster Variance Plot
+
+Trend: Similar to Problem 1, the within-cluster variance for both clustering methods decreases as the number of clusters increases, which is expected because adding more clusters generally allows for finer partitioning of the data, reducing variance within each cluster.
+
+Comparison: K-means shows slightly lower within-cluster variance than hierarchical clustering at most values of K. This outcome aligns with the strengths of K-means, which directly minimizes within-cluster variance as part of its algorithm. Since K-means consistently achieves lower within-cluster variance, it may be more efficient in capturing tighter clusters in this dataset when a specific number of clusters is set.
+
+Comparing to the plot in question 1, we also note that the within-cluster variance trend and the CH Index trend is similar as numbers increase.
+
+
+2. Between-Cluster Variance Plot
+
+Trend: Similar to Problem 1, the between-cluster variance generally increases with the number of clusters for both methods, reflecting that more clusters capture distinct data partitions.
+
+Comparison: Both methods exhibit similar between-cluster variance trends, with K-means slightly exceeding hierarchical clustering at most values of K.
+
+
+The curves viewed together suggest a balance in cluster quality around 3-5 clusters, where both methods exhibit noticeable variance separation without rapid drops in within-cluster variance or plateaus in between-cluster variance.
+
+
+# Problem 4: Brute force randomization in hierarchical clustering (points: 15/15(extra) – graduate/undergraduate)
+
+Compare distribution of the heights of the clusters defined by `hclust` with Ward's clustering of Euclidean distance between countries in the scaled WHS dataset and those obtained by applying the same approach to the distances calculated on randomly permuted WHS dataset as illustrated in the lecture slides.  Discuss whether results of such brute force randomization are supportive of presence of unusually close or distant sets of observations within WHS data.
+
+```{r p4}
+# Perform hierarchical clustering on the original scaled WHS data
+hclust_ward_original <- hclust(dist(whs_data_scaled), method = "ward.D2")
+# Extract the heights of merges (cluster heights) in the dendrogram
+heights_original <- hclust_ward_original$height
+
+# Create a randomized version of the WHS dataset by permuting each column individually
+set.seed(123)  # For reproducibility
+whs_data_randomized <- apply(whs_data_scaled, 2, sample)
+
+# Set up to collect cluster heights for randomized data
+n_simulations <- 100  # Number of randomizations
+heights_random <- numeric()  # To store heights from each simulation
+
+# Perform randomization and hierarchical clustering
+for (i in 1:n_simulations) {
+  # Randomize each column independently
+  whs_data_randomized <- apply(whs_data_scaled, 2, sample)
+  
+  # Perform hierarchical clustering on randomized data
+  hclust_ward_random <- hclust(dist(whs_data_randomized), method = "ward.D2")
+  
+  # Store heights from this randomization
+  heights_random <- c(heights_random, hclust_ward_random$height)
+}
+
+# Plot similar to class
+plot(heights_original,rank(heights_original)/length(heights_original),
+ col="red",xlab="height",ylab="F(height)",pch=19)
+points(heights_random,rank(heights_random)/length(heights_random),
+ col="blue")
+legend("topright", legend = c("Original Data", "Randomized Data"), col = c("blue", "red"), lwd = 2)
+
+# Plot the distribution of cluster heights for both original and randomized data
+par(mfrow = c(1, 2))
+hist(heights_original, breaks = 30, col = "blue", main = "Cluster Heights (Original Data)", 
+     xlab = "Height", ylab = "Frequency")
+hist(heights_random, breaks = 30, col = "red", main = "Cluster Heights (Randomized Data)", 
+     xlab = "Height", ylab = "Frequency")
+
+# Overlay density plots for easier comparison
+par(mfrow = c(1, 1))
+plot(density(heights_original), col = "blue", lwd = 2, main = "Density of Cluster Heights", 
+     xlab = "Height")
+lines(density(heights_random), col = "red", lwd = 2)
+legend("topright", legend = c("Original Data", "Randomized Data"), col = c("blue", "red"), lwd = 2)
+
+```
+**Discussion:**
+
+1. Cumulative Distribution of Cluster Heights (similar to class slides)
+
+The cumulative distribution plot reveals that cluster heights in the original data reach higher values more gradually than the randomized data. This gradual increase in the original data should indicate larger intra-cluster distances for certain clusters, reflecting structured group separation. The faster rise to 1.0 in the randomized data highlights the lack of significant separation between clusters in the randomized dataset.
+
+2. Histogram of Cluster Heights (Original vs. Randomized Data)
+
+Original Data: The histogram for the original data shows a higher frequency of larger cluster heights, suggesting that some groups of observations are notably distinct, requiring larger distances to merge.
+
+Randomized Data: The randomized data histogram is somewhat more concentrated at smaller cluster heights, indicating less distinction between groups. This is expected because randomizing the data disrupts the inherent structure, creating clusters that are less clearly separated.
+
+Implication: The stark contrast in the distribution of cluster heights between the original and randomized data supports the presence of naturally occurring groups in the original dataset that are closer within-cluster and farther apart between-cluster.
+
+3. Density Plot of Cluster Heights
+
+Original vs. Randomized Data: The density plot shows a peak for smaller cluster heights in the randomized data and a more spread-out distribution for the original data.
+
+Interpretation: The concentration of density at smaller heights for the randomized data reinforces the idea that no strong structure exists in the randomized version. In contrast, the original data’s broader distribution suggests varied distances among clusters, indicating distinct group separations in the data.
+
+
+These plots collectively demonstrate that the original WHS data contains distinct group structures, as evidenced by the larger cluster heights and the varied distribution. In contrast, the randomized data lacks such structure, showing that observed groups in the original data are not due to random chance but are reflective of true underlying relationships.

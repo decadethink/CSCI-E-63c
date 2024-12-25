@@ -1,0 +1,282 @@
+---
+title: "CSCI E-63C: Week 1 Problem Set"
+output:
+  html_document:
+    toc: true
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(dplyr)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Preface
+
+Deleted
+
+## A simple example
+
+By the way of showing a simple working example of including the code and results it generates (plots in this case), here are histograms similar to those shown in lecture slides:
+
+```{r simple,fig.width=9,fig.height=3}
+old.par <- par(mfrow=c(1,3),ps=16)
+for ( iTry in 1:3 ) {
+  x<-rnorm(50,mean=0,sd=1)
+  hist(x,breaks=10,col='lightgreen',main=paste("Average =",signif(mean(x),3)))
+}
+par(old.par)
+```
+
+The code shown above runs a loop to draw three independent samples of size 50 from the standard normal distribution (zero mean, unit variance) and plots histograms of the obtained samples side by side.
+
+Here is an example of accomplishing something very similar using `ggplot` (while precluding R code from showing up in HTML output, which, we remind you, we ask you NOT to do for the problem solution code you submit - you should go back to the RMD file to see the actual code):
+
+```{r simpleggplot,fig.width=9,fig.height=3,echo=FALSE}
+
+# draw all data at once: generate 150 random values and tag them with 1, 2, 3 (repeatedly) which 
+# will indicate which of the three "samples" of size 50 we assign the value to:
+
+df <- data.frame(
+        x=rnorm(150),
+        y=rep(1:3,50)
+      )
+
+ggplot(
+    df,
+    aes(x=x)
+  )+
+  geom_histogram(binwidth=0.5,colour="black",fill='lightgreen')+
+  facet_wrap(~y,
+             labeller=function(labels) {
+               av <- df %>% group_by(y) %>% summarise(AV=mean(x))
+               av_lbl <- av %>% mutate(L=paste("Average =", signif(AV,3)))
+               return(av_lbl["L"])
+             })
+```
+
+The choice of which plotting framework to use is totally yours -- we often prefer to be opportunistic and use whichever one is the most expedient for doing what we are aiming to accomplish, but we simply don't have time to explicitly explain and teach `ggplot` (as well as many other modern libraries) on top of our primary goal, which is statistics. However, we will be showing more examples as we move forward. Just remember that while you can use both frameworks (and others - there are more than two!) in a single document, you cannot mix them in a single plot, they won't work together. You have to generate every single plot using either R base graphics or ggplot exclusively.
+
+# Problem 1 (points: 25/30 -- graduate/undergraduate)
+
+In class we have developed a simple simulation, in which we were looking at the mean of a sample as a random variable. Specifically, we were repeatedly drawing samples of size $N=20$ from the same underlying normal distribution. In order to observe how the sample mean fluctuates from one experiment to the next we have simply plotted a histogram (i.e. empirical distribution) of the obtained means. 
+
+In this problem, we will characterize the width of the distribution of those sample means numerically, by computing the standard deviation of that distribution. Such standard deviation of the distribution of the sample means is known as "standard error of the mean" (SEM), by definition. 
+
+We will also examine how the SEM (i.e. the "width" of the *distribution of the sample means*) decreases with increasing sample size, $N$. The quite intuitive notion which we are investigating here is that if we draw a larger (random) sample, then its mean is expected to be closer, at least on average, to the true mean of the underlying population the sample was drawn from. In other words, the width of the distribution of the sample means for larger samples is expected to be smaller.
+
+The skeleton of the R code is presented below in the RMD document. Notice that its evaluation is turned off by `eval=FALSE` code chunk parameter because it is incomplete and will fail to run (and thus knitting into HTML would fail too). Once you modified the code so that it works, turn the parameter to `eval=TRUE` (which is the default, so alternatively you can just drop it altogether), so that it gets executed when you knit your solution into HTML:
+
+```{r sem,eval=TRUE}
+# different sample sizes we are going to try:
+sample.sizes=c(3,10,50, 100, 500, 1000)
+
+# we will use the vector below to save the standard deviations (i.e. widths) of the 
+# *distribution of the means* at each given sample size.
+# Note that it's ok to initialize with an empty vector of length 0 - if we index 
+# it out-of-bounds when assigning a value later, the vector will auto-expand 
+# on assignment without throwing any errors:
+mean.sds = numeric(0) 
+
+for ( N in sample.sizes ) { # try different sample sizes, one at a time
+
+ # INSERT YOUR CODE HERE: (you may want to check the slides). 
+  
+ # 1) At each given N (i.e. in each iteration of the outer loop) you have to draw large number 
+ # (e.g. 1000) of samples of that size N, from the distribution of your choice (e.g. normal, 
+ # uniform, exponential, ...), and calculate the mean of *each* of those samples. 
+ # Save all those means into a vector 'm'. 
+ #
+ # 2) Now, with vector m in hand, we want to characterize how much the sample mean fluctuates
+ # from one experiment (experiment=drawing a sample of N measurements) to the next. Instead of just
+ # plotting a histogram (empirical distribution) of vector m as we did in class, this time we want to 
+ # calculate the standard deviation of that empirical distribution. Use function sd() to achieve that.
+ #
+ # 3) save the result (sd of the distributions of the means for current N) into the vector mean.sds 
+ # defined above. You can use c() to concatenate, or you can use an indexing variable (you will need 
+ # to define it and to increment it properly then); 
+ #
+  
+  # Draw large number of samples of size N from a normal distribution
+  num.samples = 1000  # Example: 1000 samples
+  sample.means = numeric(num.samples)
+  
+  for (i in 1:num.samples) {
+    # Generate a random sample
+    sample = rnorm(N, mean = 0, sd = 1)
+    # Calculate the mean of the sample and store it
+    sample.means[i] = mean(sample)
+  }
+  
+  # Calculate the standard deviation of the sample means
+  sem = sd(sample.means)
+
+  mean.sds = c(mean.sds, sem)
+}
+
+# at this point, you should have the vector mean.sds filled. It should have length 6and keep the 
+# calculated values of the SEM at different sample sizes: mean.sds[1] is the SEM at N=3, mean.sds[2] 
+# is the SEM at N=10, and so on.
+# let us now plot the calculated SEM (i.e. the "typical" error we expect the sample mean to exhibit in any 
+# given experiment) as a function of the sample size, N. 
+
+plot(sample.sizes,mean.sds, main="SEM vs sample size",pch=19, xlab = "Sample Size", ylab = "SEM")
+lines(sample.sizes,1/sqrt(sample.sizes),col='blue')
+```
+**Comment:**
+The plot is as expected given the SEM decreases as sample size increases, at the rate of sqrt(sample size) per formula.
+
+In the last lines of the code shown above we introduced `plot()` function: the first argument is the vector of $x$-coordinates, the second argument is the vector of corresponding $y$-coordinates, and the function adds each data point $(x_i, y_i)$ to the plot. In our case, $x$ coordinates are sample sizes $N$ and $y$ coordinates are SEMs we just calculated
+for each of those sample sizes. By default, `plot()` draws only data points themselves (without connecting lines, which also can be done). In other words, the default visualization is a *scatterplot*.
+
+The last command calls the function `lines()` which is in fact a wrapper for the same function `plot()`, but has different defaults which are simply more convenient to us here: most importantly, it does not start a new plot (which is default behavior of `plot()`), but instead adds to the existing one; second, it draws lines connecting the the data points. The data points we specify for this function are calculated according to the theoretical prediction: it can be shown that when samples of size $N$ are repeatedly drawn from a distribution with standard deviation $\sigma$, the standard error of the mean (i.e. the standard deviation of the *distribution of the means* of such samples) is $SEM=\frac{\sigma}{\sqrt{N}}$. 
+
+**For the full credit on this problem**, you have to practice working with R's documentation. Please see the docs (execute `help(plot)` or simply `?plot`) and find out what you need to add to the `plot()` command in the code above in order to set the axis labels. Your resulting plot **must** have X-axis labeled as "Sample size" and y axis labeled as "SEM". This last part will cost **5 points** towards the full 25/30 (grad/undegrad) point credit for this problem.
+
+If you prefer using `ggplot2` as your plotting facility in R (in which case you will know how to use `stat_function` to add theoretical curve to a scatterplot), please feel free to accomplish the above goals using it instead of base graphics plotting functions shown above.  
+
+# Problem 2 (points: 5/5[extra] -- graduate/undergraduate)
+
+In the code above we are using `1/sqrt(sample.sizes)`to plot theoretical dependency between sample size and SEM, i.e. we assume that samples are drawn from the distribution with $\sigma=1$, just like we did in class when we used the standard normal distribution.  Reuse the code above to draw samples from a distribution with variance **different** from $1.0$, and use correct $\sigma$ in the last drawing command (`lines(sample.sizes,<correct value of s.d. here>/sqrt(sample.sizes),col='blue')`). Comment in writing on the agreement between the results of numerical simulation and theoretical values. HINT: your simulated SEM values should fall nicely onto the theoretical curve. If they don't, you got something wrong!
+
+```{r p2,eval=TRUE}
+
+# Set the sigma value, to an extreme for clarity of impact
+sigma = 10000
+
+# different sample sizes we are going to try:
+sample.sizes=c(3,10,50, 100, 500, 1000)
+
+# we will use the vector below to save the standard deviations (i.e. widths) of the 
+# *distribution of the means* at each given sample size.
+# Note that it's ok to initialize with an empty vector of length 0 - if we index 
+# it out-of-bounds when assigning a value later, the vector will auto-expand 
+# on assignment without throwing any errors:
+mean.sds = numeric(0) 
+
+for ( N in sample.sizes ) { # try different sample sizes, one at a time
+
+ # INSERT YOUR CODE HERE: (you may want to check the slides). 
+  
+ # 1) At each given N (i.e. in each iteration of the outer loop) you have to draw large number 
+ # (e.g. 1000) of samples of that size N, from the distribution of your choice (e.g. normal, 
+ # uniform, exponential, ...), and calculate the mean of *each* of those samples. 
+ # Save all those means into a vector 'm'. 
+ #
+ # 2) Now, with vector m in hand, we want to characterize how much the sample mean fluctuates
+ # from one experiment (experiment=drawing a sample of N measurements) to the next. Instead of just
+ # plotting a histogram (empirical distribution) of vector m as we did in class, this time we want to 
+ # calculate the standard deviation of that empirical distribution. Use function sd() to achieve that.
+ #
+ # 3) save the result (sd of the distributions of the means for current N) into the vector mean.sds 
+ # defined above. You can use c() to concatenate, or you can use an indexing variable (you will need 
+ # to define it and to increment it properly then); 
+ #
+  
+ # Draw large number of samples of size N from a normal distribution
+  num.samples = 1000  # Example: 1000 samples
+  sample.means = numeric(num.samples)
+  
+  for (i in 1:num.samples) {
+    # Generate a random sample
+    sample = rnorm(N, mean = 0, sd = sigma)
+    # Calculate the mean of the sample and store it
+    sample.means[i] = mean(sample)
+  }
+  
+  # Calculate the standard deviation of the sample means
+  sem = sd(sample.means)
+
+  mean.sds = c(mean.sds, sem)
+}
+
+# at this point, you should have the vector mean.sds filled. It should have length 6and keep the 
+# calculated values of the SEM at different sample sizes: mean.sds[1] is the SEM at N=3, mean.sds[2] 
+# is the SEM at N=10, and so on.
+
+# let us now plot the calculated SEM (i.e. the "typical" error we expect the sample mean to exhibit in any 
+# given experiment) as a function of the sample size, N. 
+
+plot(sample.sizes,mean.sds, main="SEM vs sample size",pch=19, xlab = "Sample Size", ylab = "SEM")
+lines(sample.sizes,sigma/sqrt(sample.sizes),col='blue')
+```
+**Comment:**
+This numerical simulation matches the theoretical values. Since SEM is calculated by sigma/sqrt(sample size), as sigma increased 10000 fold, the SEM also increased 10000 fold linearly. However, as sample size increases, the SEM decreases at a sqrt(sample size), thus the shape of the plot is similar to that of the plot in Problem 1.
+
+# Problem 3 (points: 30/30 -- graduate/undergraduate)
+
+There is a beautiful fact in statistics called the Central Limit Theorem (CLT). It states that the distribution of a sum of $N$ independent, identically distributed (i.i.d.) random variables $X_i$ has normal distribution in the limit of large $N$, regardless of the distribution of the variables $X_i$ (under some very mild conditions, strictly speaking). 
+
+Here is what it means in plain English: suppose we have a random variable distributed according to some arbitrary probability density function $f(x)$ (i.e. we have a "measurement process" that returns values according to $f(x)$). Let's "measure" the variable, i.e. draw a value from that distribution, $x_1$. Then let us draw another value $x_2$ from the *same* distribution (that's what the "identical" part of the "i.i.d." term means), independently, i.e. without any regard to the value(s) we have drawn previously. Continue until we have drawn $N$ values: $x_1, \ldots, x_N$. For all intents and purposes we actually just  have drawn a "sample of size $N$" from the distribution $f(x)$.
+
+But the quantity we are interested in this time is the sum $s=\sum_1^Nx_i=x_1+\ldots+x_N$. Sampling  $N$  independent values and then calculating their sum  is now our "experiment". Clearly, $s$ is a realization of some random variable: if we repeat the experiment (i.e. draw $N$ random values from the distribution $f(x)$ again, then sum them up) we will get a completely new realization $x_1, \ldots, x_N$ and their sum will thus take a new value too! Using our notations, we can also describe the situation outlined above as
+
+$$S=X_1+X_2+\ldots+X_N, \;\; X_i \;\; \text{i.i.d.}$$
+
+The fact stated by this equation, that random variable $S$ is the "sum of random variables" is just what we discussed above: the "process" $S$ is *defined* as measuring $N$ processes which are "independent and identically distributed" (i.e. draw from the same distribution, without any regard for the values that were already drawn in the past) and summing up the results.
+
+We cannot predict, of course, what the sum is going to be until we perform the actual measurement of $X_1, \ldots, X_N$, so $S$ is indeed a random variable itself! But then it at least has to have some probability distribution/probability density associated with it (some values of this sum got to be more likely than others). What CLT tells us is that at large $N$ this distribution is bound to be normal, *regardless* of $f(x)$ the individual variables $X_i$ are all distributed with.
+
+Instead of proving CLT formally, let's simulate and observe it in action.
+
+Here is initial code you will have to complete (remember about `eval=FALSE`!):
+
+```{r clt,eval=TRUE}
+# Set a starting N which shows the original chosen distribution
+N <- 1
+
+# how many times we are going to repeat the "experiment" (see the text above for what we now call an experiment):
+n.repeats <- 1000 
+s.values <- numeric() # we will use this vector to store the value of the sum, s, in each experiment
+
+for (i.exp in 1:n.repeats) { # repeat the experiment 'n.repeats' times
+  # More details below. In each "experiment" we must draw the values x1, ..., xN of all the 
+  # random variables we are going to sum up:
+  x <- runif(N, min = 0, max = 1)  # Using simple uniform distribution
+
+  # the "measured" value of the random variable S in the current experiment is the sum of x1...xN;
+  # calculate it and save into the vector s.values:
+   
+  ### Saving the results 
+  s.values[i.exp] <- sum(x)
+}
+
+# Plot histogram of the values of s
+hist(s.values, main = paste("Histogram of S for N =", N),
+     xlab = "Sum of N random variables", col = "lightblue", breaks = 20)
+
+# Loop for different values of N
+for (N in c(2, 5, 10, 50, 1000)) {
+  s.values <- numeric()
+  for (i.exp in 1:n.repeats) {
+    x <- runif(N, min = 0, max = 1) 
+    s.values[i.exp] <- sum(x)
+  }
+  
+  # Plot histograms for each N
+  hist(s.values, main = paste("Histogram of S for N =", N),
+       xlab = "Sum of N random variables", col = "lightblue", breaks = 20)
+}
+```
+
+What you need to do is 
+
+1. provide missing pieces indicated in the code skeleton above.
+2. You need to run the code shown above with *few different values* of $N$. *Please add  an appropriate loop to the code* (i.e. we ask you to *not* just copy-paste  the code shown above multiple times and just change $N$ every time!).
+
+Remember that the sampling functions provided in R do just what we need. For instance, `rnorm(3)` will draw *three* values at once, independently, from the same normal distribution (with default $\mu=0$ and $\sigma=1$ in this particular example). But that's exactly what measuring three i.i.d normally distributed random variables is! So in order to sample our $N$ variables $X_1,\ldots,X_N$ in each experiment, we can just call the sampling function once, with $N$ as an argument (and whatever other arguments that specific DISTR function might require). 
+
+**Please do not use** `rnorm()` for this problem though, it is too dull (the sum of *any* number of normally distributed variables, even just two, is always normal!). Use something very different from normal distribution. Uniform distribution or exponential (as implemented in R by`runif()` and `rexp()` functions) are good candidates. Please see the help pages for the distribution function you choose in order to see what are the parameters it might require.  It is also pretty entertaining to see the sum of discrete random variables (e.g. binomial) starting to resemble normal as $N$ increases!
+
+Note that the starter code above uses $N=1$. In this case $S=X_1$ and obviously $S$ is thus the same "process" as $X_1$ itself. So the histogram at $N=1$ will in fact show you the distribution you have chosen for $X$. Loop over multiple values of $N$ to rerun the code a few times. See how the distribution of $S$ (the histogram we plot) changes for $N=2$, $N=5$, ... Can you see how the distribution quickly becomes normal even though the distribution we are drawing values from (the one you have seen at $N=1$) can be very different from normal?
+
+Your solution for this problem **must include** histogram plots generated at *few* different values of $N$ of your choosing (please do not print hundreds of histograms, show instead that you can pick a few representative values!). You should include (1) $N=1$ (i.e. the distribution $f(x)$ you chose to sample from), (2) $N$ large enough so that the distribution of $S$ in the histogram looks very "normal" , and (3) some intermediate $N$, such that distribution of $S$ already visibly departed from $N=1$ but is not quite normal just yet.  The plot titles **must indicate** which distribution and what sample size each of them represents.
+
+Lastly, **for the full credit you should answer the following question (5 points)**: suppose you have an arbitrary distribution and take a sample of $N$ measurements from it. You calculate the mean of your sample. As we discussed, the sample mean is a random variable (in the sense of randomly changing from sample to sample), so it has its own distribution, $f_{\hat{\mu}}(x)$. Can we tell how the sample mean, as a random variable, is distributed (i.e. what $f_{\hat{\mu}}(x)$ is)? What is the (expected) mean of the distribution $f_{\hat{\mu}}(x)$ of the sample means (zero? infinity? constant? which one if so?)? What about standard deviation of the sample mean (i.e. the "width" of $f_{\hat{\mu}}(x)$)? How does it behave as sample size $N$ increases? Finally, can anything be said about the shape of the distribution $f_{\hat{\mu}}(x)$ of sample means in the limit of large $N$?  HINT: look at the definition of the sample mean!
+
+**Answer:**
+
+The sample mean will follow a distribution that approaches normality as N increases, according to the Central Limit Theorem. The expected mean of the sample means will be the population mean of the distribution f(x). The standard deviation of the sample means will decrease as N increases, specifically scaling as σ/sqrt(N), where σ is the standard deviation of the original distribution. The shape of the distribution for large N will tend toward a normal distribution regardless of the shape of f(x), as we saw via the histograms in Problem 3 as N increased.
+

@@ -1,0 +1,580 @@
+---
+title: "CSCI E-63C: Week 12 Problem Set by Ziqi Zhao"
+output:
+  html_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+library(ISLR)
+library(e1071)
+library(randomForest)
+library(class)
+library(ggplot2)
+library(GGally)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Preface
+
+This week problem set will explore behavior of support vector classifiers and SVMs (following the distinction made in ISLR) on WiFi localization dataset from UCI ML archive.  We worked with it on multiple occasions already (most recently two weeks ago, when evaluating the performance of logistic regression, discriminant analysis and KNN on those data).  Same way as we did it two weeks ago, we are going to convert the four-level outcome provided in the dataset to the binary one, indicating localization at the third room vs amywhere else:
+
+```{r wifiExample,fig.width=8,fig.height=8,warning=FALSE}
+wifiLocDat <- read.table("wifi_localization.txt",sep="\t")
+colnames(wifiLocDat) <- c(paste0("WiFi",1:7),"Loc")
+ggpairs(wifiLocDat,aes(colour=factor(Loc)))
+wifiLocDat[,"Loc3"] <- factor(wifiLocDat[,"Loc"]==3)
+wifiLocDat <- wifiLocDat[,colnames(wifiLocDat)!="Loc"]
+dim(wifiLocDat)
+summary(wifiLocDat)
+head(wifiLocDat)
+```
+
+Here we will use SVM implementation available in the library `e1071` to fit classifiers with linear and radial (polynomial for extra points) kernels and to compare their relative performances; we will also compare their performance to that of random forest and KNN.
+
+# Problem 1: support vector classifier using linear kernel (points: 20/30 – graduate/undergraduate)
+
+* Use `svm()` function from library `e1071` with `kernel="linear"` to fit classifier (see e.g. ISLR Ch.9.6.1) to the entire WiFi localization dataset setting parameter `cost` to 0.001, 1, 1000 and 1 mln.  
+
+* Describe how those changes in the `cost` parameter affect (1) the model fitting process (**hint**: 
+the difficulty of the underlying optimization problem increases with cost -- can you explain why?) and (2) its outcome 
+(e.g. how does the number of support vectors change with `cost`?). What are the implications?  
+
+* Please explain explicitly (ever so briefly is fine) why the change in `cost` value impacts number of support vectors found. (**hint**: there is an answer in ISLR.)  
+
+* Use `tune()` function from library `e1071` (see ISLR Ch.9.6.1 for details and examples of usage) to determine approximate value of the cost that yields the lowest error in cross-validation employed by `tune`.  Please use the grid for the cost parameter spanning the range between 0.1 and 100. Note that for the cost range spanning orders of magnitude it would be a good idea to use (approximately) logarithmic grid density -- e.g. something like 0.1, 0.3, 1, 3, 10...,  or 0.1, 0.2, 0.5, 1, ... *etc*.). When you find the (approximately) optimal cost, you may rerun `tune()` on a denser grid just around that value to get a more accurate result (for your own enjoyment, this is not required).
+
+* Now setup a resampling procedure by repeatedly splitting the entire dataset into training and test subsets. In each resampling iteration  (1) use just the *training* subset to fully `tune` cost value (in other words, we are now asking `tune` to perform all of its own crossvalidation splits and to identify the "best" cost parameter value using training data only); then (2) use the test subset  (i.e. the part of the data that was *truly* unseen before, not even for choosing the model's hyperparameter -- cost in this case) to estimate the classification test error of the best model tuned on the training subset. Draw distributions of the test errors (boxplots are fine) reported by `tune` for the best models (i.e. obtained through cross-validation on the training set) and those computed for the selected best model on the actual test set, discuss.
+
+```{R p1.1}
+# Set cost values
+cost_values <- c(0.001, 1, 1000, 1e6)
+
+# Train SVM models
+svm_models <- lapply(cost_values, function(cost) {
+  svm(Loc3 ~ ., data = wifiLocDat, kernel = "linear", cost = cost)
+})
+
+# Summarize the number of support vectors
+support_vectors <- sapply(svm_models, function(model) length(model$index))
+names(support_vectors) <- cost_values
+print(support_vectors)
+
+```
+
+
+```{R p1.2}
+tuned_model <- tune(
+  svm, Loc3 ~ ., 
+  data = wifiLocDat,
+  kernel = "linear",
+  ranges = list(cost = c(0.001, 0.3, 1, 3, 10, 30, 100))
+)
+
+# View the best cost and performance
+print(tuned_model$best.parameters)
+print(tuned_model$best.performance)
+
+
+```
+
+```{R p1.3}
+set.seed(123)  # For reproducibility
+n_resamples <- 10
+test_errors <- numeric(n_resamples)
+
+for (i in 1:n_resamples) {
+  # Split data into training and test sets
+  train_indices <- sample(1:nrow(wifiLocDat), size = 0.8 * nrow(wifiLocDat))
+  train_data <- wifiLocDat[train_indices, ]
+  test_data <- wifiLocDat[-train_indices, ]
+  
+  # Tune the cost parameter on training data
+  tuned <- tune(
+    svm, Loc3 ~ ., data = train_data,
+    kernel = "linear",
+    ranges = list(cost = c(0.1, 0.3, 1, 3, 10, 30))
+  )
+  
+  # Train the best model on training data
+  best_model <- tuned$best.model
+  
+  # Compute test error
+  predictions <- predict(best_model, newdata = test_data)
+  test_errors[i] <- mean(predictions != test_data$Loc3)
+}
+
+# Boxplot of test errors
+boxplot(test_errors, main = "Test Errors Distribution", ylab = "Error Rate")
+
+```
+**Discussions**:
+
+The cost parameter in an SVM controls the trade-off between achieving a low error on the training set and maintaining a decision boundary that generalizes well to unseen data. Low cost encourages a wider margin, even at the expense of some misclassified training points. High cost tries to classify all training points correctly, leading to a narrower margin. Thus as cost increases, the optimization problem becomes harder due to stricter constraints, and only points defining the decision boundary are retained. As we saw in the output, at cost = 0.001 there were 1,013 support vectors, which decreases to 450 support vectors when cost is set to 1 million. This may be explained by the margin shrinking drastically, and points that aren't strictly on or near the decision boundary (e.g., those far from the margin) are no longer support vectors.
+
+I ran this multiple times and the optimal parameter is approximately in the range between 0.226-0.231. The cost comes between 0.3-100 in the runs I saw.
+
+The boxplot of test errors from approx 0.20 to 0.27 reveals the variability in error rates across iterations. Outliers may indicate cases where the test split was particularly challenging (e.g., imbalanced or containing more edge cases). A narrow interquartile range (IQR) would suggest robust performance, while a wider IQR highlights sensitivity to the data split, in our case it looks fairly robust. Test errors are generally higher than the training cross-validation errors. This is because the model is tuned to minimize error on the training set during cross-validation, but it has not "seen" the test set data before, making it harder to achieve similar performance. This is expected as a generalization gap is common. This problem overall and in particular the observed test errors reflect the interplay between bias (underfitting) and variance (overfitting).
+
+
+# Problem 2: comparison to random forest (points: 10/10(extra) – graduate/undergraduate)
+
+* Fit random forest classifier on the entire WiFi localization dataset using default parameters.  
+
+* Obtain resulting misclassification error as reported by the confusion matrix in random forest output.  
+
+* Explain why error reported in random forest confusion matrix represents estimated test (as opposed to train) error of the procedure.  
+
+* Compare resulting test error to that for support vector classifier obtained above and discuss results of such comparison.
+
+For this problem, there is no need to set up an "external" resampling loop, you can use the whole dataset.
+
+```{R P2}
+
+# Fit a random forest model to the dataset
+rf_model <- randomForest(Loc3 ~ ., data = wifiLocDat, importance = TRUE)
+print(rf_model)
+
+# Extract the confusion matrix
+conf_matrix <- rf_model$confusion
+
+# Calculate misclassification error
+misclass_error <- 1 - sum(diag(conf_matrix)) / sum(conf_matrix)
+print(paste("Misclassification Error:", misclass_error))
+
+# Average test error from SVM
+svm_test_error <- mean(test_errors)
+
+# Compare Random Forest and SVM errors
+print(paste("Random Forest Test Error:", misclass_error))
+print(paste("SVM Test Error:", svm_test_error))
+
+
+```
+
+**Discussions:**
+
+The error reported in the random forest confusion matrix represents the estimated test error rather than the training error because it should be using bootstrap sampling on each decision tree, with maybe 1/3 left "out of bag" (OOB) for each tree during training. The OOB data acts as a validation set for the corresponding tree. The model makes predictions on these unseen OOB samples, and the error calculated from these predictions provides an unbiased estimate of the generalization error. Since the OOB error is calculated on samples not used for training, it closely approximates the performance of the model on truly unseen data, which is effectively an estimate of test error.
+
+Random forest only has a 1.25% test error which SVM has 22.08%. This suggests that random forest is better at capturing the complex relationships in the WiFi localization dataset than SVM as expected. The higher test error for SVM may indicate that the decision boundary formed by the linear kernel is insufficient to capture the complexity of the data, since we forced the binary relationship when in reality the original data was more complex. Random forest inherently balances bias and variance through its ensemble approach, making it robust to overfitting while maintaining high accuracy.
+
+
+# Problem 3: comparison to cross-validation tuned KNN predictor (points: 10/10(extra) – graduate/undergraduate)
+
+* Use convenience wrapper `tune.knn` provided by the library `e1071` on the *entire* dataset to determine optimal value for the number of the nearest neighbors 'k' to be used in KNN classifier.  Consider our observations from week 10 problem set when choosing range of values of `k` to be evaluated by `tune.knn`.  
+
+* Then setup a hierachical resampling procedure similar to the one used in Problem 1 for support vector classifier: the procedure will repeatedly (1) split WiFi localization dataset into training and test; (2) use `tune.knn` on just the training data to determine optimal `k`; and then (3) use `k` estimated by `tune.knn` from the training subset to make KNN classifications on the test subset.  Report and discuss distributions of test errors from this procedure, as  well as the distributions of the selected values of `k` (since we are now tuning on a new, randomly selected training subset every time, the selected "best" values for $k$ *might* be different!). Compare the test errors to those obtained earlier when using random forest and support vector classifier.
+
+```{R P3}
+
+# Extract predictor matrix and response variable
+x <- wifiLocDat[, -which(names(wifiLocDat) %in% c("Loc", "Loc3"))]
+y <- wifiLocDat$Loc3
+
+# Define the range of k values to tune and determine best k
+k_range <- seq(1, 20, by = 2)
+
+tuned_knn <- tune.knn(
+  x = x, 
+  y = y, 
+  k = k_range
+)
+
+print(tuned_knn$best.parameters)
+print(tuned_knn$best.performance)
+
+set.seed(123)  # For reproducibility
+n_resamples <- 10 
+test_errors_knn <- numeric(n_resamples)  # Store test errors
+best_k_values <- numeric(n_resamples)  # Store selected k values
+
+# Split data into training and test sets
+for (i in 1:n_resamples) {
+  train_indices <- sample(1:nrow(wifiLocDat), size = 0.8 * nrow(wifiLocDat))
+train_data <- wifiLocDat[train_indices, ]  
+test_data <- wifiLocDat[-train_indices, ] 
+
+  # Best k from tuning
+  best_k <- tuned_knn$best.parameters$k
+  best_k_values[i] <- best_k
+  
+  # Train and predict using the best k
+  knn_model <- knn(
+    train = train_data[, -ncol(train_data)],  
+    test = test_data[, -ncol(test_data)],    
+    cl = train_data$Loc3,                  
+    k = best_k
+  )
+  
+  # Compute test error
+  test_errors_knn[i] <- mean(knn_model != test_data$Loc3)
+}
+
+# Boxplot of test errors and selected k values
+boxplot(test_errors_knn, main = "Test Errors Distribution (KNN)", ylab = "Error Rate")
+boxplot(best_k_values, main = "Selected k Values", ylab = "k")
+
+# Print average test errors
+svm_test_error <- mean(test_errors)  # From Problem 1
+rf_test_error <- misclass_error      # From Problem 2
+knn_test_error <- mean(test_errors_knn)
+
+print(paste("SVM Test Error:", svm_test_error))
+print(paste("Random Forest Test Error:", rf_test_error))
+print(paste("KNN Test Error:", knn_test_error))
+
+```
+**Discussions:**
+
+For my runs, the selected k values cluster around 1–3 (Aligns with what we saw in homework 10 P3 and P4), indicating that the algorithm performs best with a very localized decision boundary. This aligns with the expectation that WiFi localization data benefits from very fine-grained neighborhood analysis. KNN seems to be a highly suitable algorithm for this dataset due to the localized nature of WiFi signal strengths and the inherent clustering of data points. Its ability to adapt to non-linear decision boundaries with minimal assumptions about the data distribution gives it an edge. We observe a very low test error rate of around 0.005-0.017 in the boxplot, which is even better than random forest on average of around 0.011.
+
+
+# Problem 4: SVM with radial kernel (points: 20/30 – graduate/undergraduate)
+
+## Sub-problem 4a: impact of rate parameter $\gamma$ on classification surface (points: 10/15 – graduate/undergraduate)
+
+* *Plot* SVM model fit to the WiFi localization dataset using (for the ease of plotting) *only the first and the second attributes* as predictor variables, `kernel="radial"`, `cost=10` and `gamma=5` (see ISLR Ch.9.6.2 for an example of that done with a simulated dataset).  
+
+In the resulting plot, you should be able to see the yellow and brown regions separated by the classification boundary as computed by this model.  
+
+* Also produce the same kinds of plots using 0.5 and 50 as the values for `gamma`.  Compare classification 
+boundaries in these three plots and describe how they are impacted by the change in the value of `gamma`.  
+Can you trace it back to the role of the parameter `gamma` in the equation for the radial kernel in ISLR?
+
+```{R P4a}
+# Subset the dataset for the first two attributes and binary target variable
+wifi_subset <- wifiLocDat[, c(1, 2, which(names(wifiLocDat) == "Loc3"))]
+colnames(wifi_subset) <- c("Attr1", "Attr2", "Loc3")
+
+# Define gamma values
+gamma_values <- c(0.5, 5, 50)
+
+# Fit SVM models for each gamma value
+svm_models <- lapply(gamma_values, function(g) {
+  svm(Loc3 ~ Attr1 + Attr2, data = wifi_subset, kernel = "radial", cost = 10, gamma = g)
+})
+
+library(ggplot2)
+
+# Function to plot decision boundary
+plot_decision_boundary <- function(model, data, gamma_value) {
+  # Create a grid of points for prediction
+  x_range <- seq(min(data$Attr1) - 1, max(data$Attr1) + 1, length.out = 100)
+  y_range <- seq(min(data$Attr2) - 1, max(data$Attr2) + 1, length.out = 100)
+  grid <- expand.grid(Attr1 = x_range, Attr2 = y_range)
+  
+  # Predict class for each point in the grid
+  grid$Predicted <- predict(model, grid)
+  
+  # Ensure Loc3 is treated as a factor in the dataset (getting errors prior)
+  data$Loc3 <- factor(data$Loc3)
+  
+  # Plot the data points and decision boundary
+  ggplot() +
+    geom_tile(data = grid, aes(x = Attr1, y = Attr2, fill = Predicted), alpha = 0.3) +  # Decision boundary
+    geom_point(data = data, aes(x = Attr1, y = Attr2, color = Loc3), size = 3) +  # Original points
+    scale_fill_manual(values = c("yellow", "brown"), guide = "none") +
+    scale_color_manual(values = c("red", "blue")) +
+    ggtitle(paste("SVM with Radial Kernel (Gamma =", gamma_value, ")")) +
+    theme_minimal()
+}
+
+
+
+# Generate plots for each gamma value
+plots <- lapply(seq_along(svm_models), function(i) {
+  plot_decision_boundary(svm_models[[i]], wifi_subset, gamma_values[i])
+})
+
+# Print the plots
+print(plots[[1]])  # Gamma = 0.5
+print(plots[[2]])  # Gamma = 5
+print(plots[[3]])  # Gamma = 50
+
+```
+**Discussions:**
+
+The parameter gamma controls the influence of a single training example on the decision boundary. We see from the plots that low gamma allows influence to extend farther, resulting in smoother, less complex boundaries, which creates a model that underfits the data by prioritizing a more generalized decision boundary. High Gamma on the other hand restricts influence to a smaller area, leading to highly localized and complex boundaries, causing overfitting and potential poor generalization to new data.
+
+This behavior reflects the equation for the radial kernel function, where a low gamma value reduces the exponential decay, causing more distant points to still influence the decision boundary, and a high gamma value increases the decay rate, limiting influence to nearby points. The choice of gamma should ultimately balance model complexity and generalization. 
+
+## Sub-problem 4b: test error for SVM with radial kernel (points: 10/15 – graduate/undergraduate)
+
+* In a way similar to how it was done earlier for the support vector classifier (and KNN), set up a resampling process that will repeatedly: (1) split the entire dataset (using all attributes as predictors) into training and test subsets; (2) in each iteration use `tune` function to determine the optimal values of `cost` *and* `gamma`; then (3) calculate the test error using these values of `cost` and `gamma` (on the actual test subset).  Consider what you have learned above about the effects of the parameters `cost` and `gamma` to decide on the starting ranges of their values to be evaluated by `tune`. 
+
+* Additionally, experiment with different sets of those values and discuss the results in your solution. Discuss how you would go about selecting the ranges for tuning starting from scratch.  
+
+* Present resulting test error graphically and compare  them to those obtained in the previous problems with support vector classifier (i.e. with linear kernel), with random forest, and with KNN. Discuss results of these comparisons. 
+
+```{R P4b}
+set.seed(123)  # For reproducibility
+n_resamples <- 10  
+test_errors_radial <- numeric(n_resamples)  
+best_cost_values <- numeric(n_resamples)  
+best_gamma_values <- numeric(n_resamples)
+
+# Define ranges for tuning
+cost_range <- c(0.1, 1, 10, 100)
+gamma_range <- c(0.5, 0.1, 1, 20)
+
+# Stratified sampling: Ensure both classes are present in the training set
+for (i in 1:n_resamples) {
+  train_indices <- unlist(lapply(split(1:nrow(wifiLocDat), wifiLocDat$Loc3), function(indices) {
+    sample(indices, size = round(0.8 * length(indices)))
+  }))
+  train_data <- wifiLocDat[train_indices, ]
+  test_data <- wifiLocDat[-train_indices, ]
+  
+  # Ensure factor levels are consistent in training and test sets
+  train_data$Loc3 <- factor(train_data$Loc3, levels = levels(wifiLocDat$Loc3))
+  test_data$Loc3 <- factor(test_data$Loc3, levels = levels(wifiLocDat$Loc3))
+  
+  # Tune SVM with radial kernel on the training set
+  tuned_model <- tune(
+    svm, Loc3 ~ ., data = train_data,
+    kernel = "radial",
+    ranges = list(cost = cost_range, gamma = gamma_range)
+  )
+  
+  # Best parameters
+  best_cost <- tuned_model$best.parameters$cost
+  best_gamma <- tuned_model$best.parameters$gamma
+  best_cost_values[i] <- best_cost
+  best_gamma_values[i] <- best_gamma
+  
+  # Train the best model on training data
+  best_model <- tuned_model$best.model
+  
+  # Predict on the test set
+  predictions <- predict(best_model, newdata = test_data)
+  
+  # Calculate test error
+  test_errors_radial[i] <- mean(predictions != test_data$Loc3)
+}
+
+# Display results
+test_errors_radial
+best_cost_values
+best_gamma_values
+
+# Boxplots
+boxplot(test_errors_radial,
+        main = "Test Errors Distribution (SVM with Radial Kernel)",
+        ylab = "Error Rate")
+
+boxplot(best_cost_values,
+        main = "Selected Cost Values (SVM with Radial Kernel)",
+        ylab = "Cost")
+
+boxplot(best_gamma_values,
+        main = "Selected Gamma Values (SVM with Radial Kernel)",
+        ylab = "Gamma")
+
+# Compare with previous methods
+average_test_error <- mean(test_errors_radial)
+cat("Average Test Error (SVM with Radial Kernel):", average_test_error, "\n")
+
+svm_linear_error <- mean(test_errors)
+rf_test_error <- misclass_error        
+knn_test_error <- mean(test_errors_knn)
+
+cat("Comparison of Average Test Errors:\n")
+cat("SVM (Linear Kernel):", svm_linear_error, "\n")
+cat("Random Forest:", rf_test_error, "\n")
+cat("KNN:", knn_test_error, "\n")
+cat("SVM (Radial Kernel):", average_test_error, "\n")
+
+```
+**Discussions:**
+
+I chose cost from 0.1 to 100 as that was the approx. range seen to be optimal from Problem 1. I also chose gamma within a range of 0.5 to 20 given what was plotted in Problem 4a. 
+
+The boxplot for selected cost values indicates that the optimal cost parameter often trends towards a smaller range (e.g., values around 10), but an outlier at 100 suggests some sensitivity to data splits during tuning. The gamma values center around 0.5 with some variation, as shown in the boxplot. This suggests that the model benefits from a moderate gamma that balances the influence of individual training points on the decision boundary. From scratch I would probably start with a very wide range and narrow down using a binary search-like approach.
+
+The SVM with radial kernel achieves a test error of 0.015, which is comparable to random forest but slightly worse than KNN. This performance highlights the radial kernel's ability to model non-linear relationships, although it may require fine-tuned cost and gamma to perform optimally. The radial kernel significantly outperforms the linear kernel due to its ability to model complex, non-linear decision boundaries.
+
+Overall, KNN and Random Forest are the top-performing models in this context. While SVM with a radial kernel also performs well, but its sensitivity to cost and gamma parameters requires careful tuning for optimal performance.
+
+# Extra points problem: SVM with polynomial kernel (points: 5/5 – graduate/undergraduate)
+
+Repeat what was you have done in Problem 4 (plots of decision boundaries for various interesting values of tuning parameters and test error for their best values estimated from training data) using `kernel="polynomial"`.   Determine ranges of `coef0`, `degree`, `cost` and `gamma` to be evaluated by `tune`.  Present and discuss resulting test error and how it compares to the errors of linear and radial kernels and also of random forest and KNN models.
+
+```{R P5}
+set.seed(123)  # For reproducibility
+n_resamples <- 10 
+test_errors_poly <- numeric(n_resamples)  
+best_cost_values <- numeric(n_resamples) 
+best_gamma_values <- numeric(n_resamples) 
+best_degree_values <- numeric(n_resamples)  
+best_coef0_values <- numeric(n_resamples) 
+
+# Define ranges for tuning
+cost_range <- c(0.1, 1, 10, 100)
+gamma_range <- c(0.01, 0.1, 1)
+degree_range <- c(2, 3, 4)
+coef0_range <- c(0, 1)
+
+for (i in 1:n_resamples) {
+  # Stratified sampling: Ensure both classes are present in the training set
+  train_indices <- unlist(lapply(split(1:nrow(wifiLocDat), wifiLocDat$Loc3), function(indices) {
+    sample(indices, size = round(0.8 * length(indices)))
+  }))
+  train_data <- wifiLocDat[train_indices, ]
+  test_data <- wifiLocDat[-train_indices, ]
+  
+  # Ensure factor levels are consistent in training and test sets
+  train_data$Loc3 <- factor(train_data$Loc3, levels = levels(wifiLocDat$Loc3))
+  test_data$Loc3 <- factor(test_data$Loc3, levels = levels(wifiLocDat$Loc3))
+  
+  # Skip iteration if training data does not contain both levels
+  if (length(unique(train_data$Loc3)) < 2) {
+    cat("Skipping iteration due to missing levels in training data.\n")
+    next
+  }
+  
+  # Tune SVM with polynomial kernel on the training set
+  tuned_model <- tune(
+    svm, Loc3 ~ ., data = train_data,
+    kernel = "polynomial",
+    ranges = list(
+      cost = cost_range,
+      gamma = gamma_range,
+      degree = degree_range,
+      coef0 = coef0_range
+    )
+  )
+  
+  # Best parameters
+  best_cost <- tuned_model$best.parameters$cost
+  best_gamma <- tuned_model$best.parameters$gamma
+  best_degree <- tuned_model$best.parameters$degree
+  best_coef0 <- tuned_model$best.parameters$coef0
+  best_cost_values[i] <- best_cost
+  best_gamma_values[i] <- best_gamma
+  best_degree_values[i] <- best_degree
+  best_coef0_values[i] <- best_coef0
+  
+  # Train the best model on training data
+  best_model <- tuned_model$best.model
+  
+  # Predict on the test set and calculate test error
+  predictions <- predict(best_model, newdata = test_data)
+  
+  test_errors_poly[i] <- mean(predictions != test_data$Loc3)
+}
+
+# Display results
+test_errors_poly
+best_cost_values
+best_gamma_values
+best_degree_values
+best_coef0_values
+```
+```{r P5.2}
+# Define parameters for visualization
+visualization_params <- list(
+  list(degree = 2, coef0 = 0, gamma = 0.1, cost = 1),
+  list(degree = 3, coef0 = 1, gamma = 0.1, cost = 10),
+  list(degree = 4, coef0 = 1, gamma = 1, cost = 100)
+)
+
+# Function to plot decision boundary
+plot_decision_boundary_poly <- function(degree, coef0, gamma, cost) {
+  model <- svm(
+    Loc3 ~ WiFi1 + WiFi2,  # Replace Attr1, Attr2 with WiFi1, WiFi2 (actual column names)
+    data = wifiLocDat[, c("WiFi1", "WiFi2", "Loc3")],  # Ensure these column names exist
+    kernel = "polynomial",
+    degree = degree,
+    coef0 = coef0,
+    gamma = gamma,
+    cost = cost
+  )
+  
+  # Create grid for decision boundary
+  x_range <- seq(min(wifiLocDat$WiFi1) - 1, max(wifiLocDat$WiFi1) + 1, length.out = 100)
+  y_range <- seq(min(wifiLocDat$WiFi2) - 1, max(wifiLocDat$WiFi2) + 1, length.out = 100)
+  grid <- expand.grid(WiFi1 = x_range, WiFi2 = y_range)
+  grid$Predicted <- predict(model, grid)
+  
+  # Plot
+  ggplot() +
+    geom_tile(data = grid, aes(x = WiFi1, y = WiFi2, fill = Predicted), alpha = 0.3) +
+    geom_point(data = wifiLocDat, aes(x = WiFi1, y = WiFi2, color = Loc3)) +
+    scale_fill_manual(values = c("yellow", "brown"), guide = "none") +
+    scale_color_manual(values = c("red", "blue")) +
+    ggtitle(paste("Degree =", degree, "| Coef0 =", coef0, "| Gamma =", gamma, "| Cost =", cost)) +
+    theme_minimal()
+}
+
+# Update visualization parameters to ensure they match
+visualization_params <- list(
+  list(degree = 2, coef0 = 0, gamma = 0.1, cost = 1),
+  list(degree = 3, coef0 = 1, gamma = 0.1, cost = 10),
+  list(degree = 4, coef0 = 1, gamma = 1, cost = 100)
+)
+
+# Generate and print plots
+plots <- lapply(visualization_params, function(params) {
+  plot_decision_boundary_poly(
+    degree = params$degree,
+    coef0 = params$coef0,
+    gamma = params$gamma,
+    cost = params$cost
+  )
+})
+
+for (plot in plots) {
+  print(plot)
+}
+
+# Boxplots of errors and selected coefficients
+boxplot(
+  test_errors_poly, 
+  main = "Test Errors Distribution (Polynomial Kernel)", 
+  ylab = "Error Rate"
+)
+
+boxplot(
+  best_cost_values, 
+  main = "Selected Cost Values (Polynomial Kernel)", 
+  ylab = "Cost"
+)
+
+boxplot(
+  best_gamma_values, 
+  main = "Selected Gamma Values (Polynomial Kernel)", 
+  ylab = "Gamma"
+)
+
+boxplot(
+  best_degree_values, 
+  main = "Selected Degree Values (Polynomial Kernel)", 
+  ylab = "Degree"
+)
+
+boxplot(
+  best_coef0_values, 
+  main = "Selected Coef0 Values (Polynomial Kernel)", 
+  ylab = "Coef0"
+)
+
+
+```
+
+**Discussions:**
+
+The test errors from the polynomial kernel SVM have a range of 0.0075 to 0.0250 and a mean test error of approx. 0.0135, this is very close to the radial kernal SVM.
+
+In terms of the 3 decision boundary plots shown, the plot showing the best result is the one choosing moderate parameters (Degree=3 , Cost=10), with the brown region overlapping with the blue dots the best. Degree = 2 and Degree = 4 show multiple separated regions of brown which should be a trait of polynomial SVM.
+
+With more specifics, in terms of parameters and boxplots:
+
+- The degree of the polynomial mostly settles around 2, suggesting a quadratic kernel suffices for this dataset. This matches expectations when the decision boundaries are moderately complex.
+- The cost parameter consistently selects higher values, emphasizing a preference for smaller margins and fewer misclassifications on the training set.
+- The gamma values are consistently small (0.1), which prevents overfitting by ensuring a smoother decision boundary.
+- The coef0 coefficient parameter is more varied but remains around 1, indicating it plays a moderate role in the decision boundary's flexibility.
+
+The polynomial kernel provides a balance between flexibility and generalization, however it takes way too long to run. I get repeated "WARNING: reaching max number of iterations" and thus unless radial kernal SVM
+isn't satisfactory and we want to use SVM instead of random forest or KNN, I would not try polynomial SVM to start when analyzing other datasets.
+

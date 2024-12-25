@@ -1,0 +1,588 @@
+---
+title: "CSCI E-63C: Midterm Exam By Ziqi (Jason) Zhao"
+output:
+  html_document:
+    toc: true
+---
+
+# Introduction
+
+*The goal of the midterm exam is to apply some of the methods covered in our course by now to a new dataset.  We will work with the data characterizing real estate valuation in New Taipei City, Taiwan that is available at [UCI ML repository](https://archive.ics.uci.edu/ml/datasets/Real+estate+valuation+data+set) as well as at this course website on canvas. The overall goal will be to use data modeling approaches to understand which attributes available in the dataset influence real estate valuation the most.  The outcome attribute (Y -- house price of unit area) is inherently continuous, therefore representing a regression problem.*
+
+*For more details please see dataset description available at UCI ML or corresponding [HTML file](https://canvas.harvard.edu/courses/148809/files/20619241/download) on canvas website for this course.  For simplicity, clarity and to decrease your dependency on the network reliability and UCI ML or canvas website availability during the time that you will be working on this project you are advised to download data made available on the canvas website to your local folder and work with the local copy. The dataset at UCI ML repository as well as its copy on our course canvas website is provided as an Excel file [Real estate valuation data set.xlsx](https://canvas.harvard.edu/courses/148809/files/20619111/download) -- you can either use `read_excel` method from R package `readxl` to read this Excel file directly or convert it to comma or tab-delimited format in Excel so that you can use `read.table` on the resulting file with suitable parameters (and, of course, remember to double check that in the end what you have read into your R environment is what the original Excel file contains).*
+
+*Finally, as you will notice, the instructions here are much terser than in the previous problem sets. We expect that you use what you've learned in the class to complete the analysis and draw appropriate conclusions based on the data.  The approaches that you are expected to apply here have been exercised in the preceeding weeks -- please feel free to consult your submissions and/or official solutions as to how they have been applied to different datasets.  As always, if something appears to be unclear, please ask questions -- note that we may decide to change your questions to private mode as we see fit, if in our opinion they reveal too many specific details of the problem solution.*
+
+# Sub-problem 1: load and summarize the data (points: 20/20 – graduate/undergraduate)
+
+```{R P1.1 reading in data}
+# Load libraries
+library(readxl)
+library(ggplot2)
+library(corrplot)
+library(reshape2)
+library(leaps)
+library(glmnet)
+library(dplyr)
+library(car)
+
+# Load the dataset
+file_path <- "Real estate valuation data set.xlsx"
+data <- read_excel(file_path)[, -1] #Exclude the first numbering column
+
+# Summary statistics for the dataset
+head(data)
+summary(data)
+
+# Check for missing values
+colSums(is.na(data))
+```
+
+```{R P1.2 Overview of variables}
+
+# Select only numeric columns, a safeguard since all data appears numeric
+numeric_cols <- sapply(data, is.numeric)
+numeric_data <- data[, numeric_cols]
+
+# Plot histograms for each numeric column
+for (col in names(data)[numeric_cols]) {
+
+  col_data <- data[[col]]
+  
+  hist(col_data, 
+       main = paste("Histogram of", col), 
+       xlab = col, 
+       col = "lightblue", 
+       border = "black", 
+       breaks = 30)
+}
+```
+
+```{R P1.3 pairs and correlations plots, fig.width=10,fig.height=10}
+
+# Generate pairs plot
+pairs(numeric_data, 
+      main = "Pairs Plot of Numeric Variables", 
+      pch = 19, 
+      col = "blue")
+
+
+# Compute the correlation matrix
+cor_matrix <- cor(numeric_data, use = "complete.obs")
+
+# Reshape the correlation matrix
+cor_melted <- melt(cor_matrix)
+
+# Plot the heatmap
+ggplot(cor_melted, aes(Var1, Var2, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                       midpoint = 0, limit = c(-1, 1), space = "Lab", 
+                       name = "Correlation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+                                   size = 12, hjust = 1)) +
+  labs(title = "Correlation Matrix Heatmap", x = "", y = "")
+
+# Correlation matrix and visualization
+cor_matrix <- cor(data[, numeric_cols], use = "complete.obs")
+corrplot(cor_matrix, method = "circle", type = "upper")
+```
+
+*Download and read in the data, produce numerical and graphical summaries of the dataset attributes, decide whether they can be used for modeling in untransformed form or any transformations are justified, comment on correlation structure and whether some of the predictors suggest relationship with the outcome.*
+
+**Discussions P1:**
+
+We see from the histograms skew in:
+
+- X2 house age (long tail of older properties and concentration of new)
+- X3 distance to the nearest MTR station (many close and a tail of further out)
+- Y house price of unit area (very slight skew + outlier to the right, less expensive houses with a larger range)
+
+A log transformation could potentially help with the variables above, but we will only log transform Y for simplicity and because the skew in house age and distance to MTR seems natural.
+
+We also see properties seem to somewhat cluster based on the number of convenience stores. We could also treat the number of convenience stores as a categorical or binned feature, but again not done
+here as this is not strong enough and will complicate the modelling down the line.
+
+
+Pairs plot and correlation matrix observations:
+
+- house price is somewhat correlated to house age and strongly to distance to MTR (both negatively), as one would expect in purchasing a house
+- Convenience stores is also mildly correlated with house price, as one would expect.
+- Latitude and longitude are strongly correlated, but they are also somewhat correlated with each other and other distance related metrics (distance to MTR and convenience stores nearby).
+this might result in multicollinearity. We can check multicollinearity with VIF later.
+
+Interactions terms may also be explored here, intuitively say between latitude and longitude as well as distance to MTR and no. of convenience stores, as both are accessibility metrics.
+
+# Sub-problem 2: multiple linear regression model (points: 25/30 – graduate/undergraduate)
+
+```{R P2.1 Basic model,fig.width=8,fig.height=8}
+
+# Fit multiple linear regression model
+model <- lm(`Y house price of unit area` ~ ., data = data)
+summary(model)
+
+# Diagnostic plots
+par(mfrow = c(2, 2))  
+plot(model)
+
+# Extract 99% confidence intervals for model coefficients
+confint(model, level = 0.99)
+
+# Checking for potential multicollinearity using VIF
+vif(model)
+
+```
+
+```{R P2.2 New mean observation prediction}
+
+# Create a new observation with means of the predictor variables only
+new_obs <- as.data.frame(t(colMeans(data[, !names(data) %in% "Y house price of unit area"])))
+
+# Predict house price with a 90% confidence interval
+mean_prediction <- predict(model, newdata = new_obs, interval = "confidence", level = 0.90)
+print(mean_prediction)
+
+# Calculate the actual mean house price from the dataset
+actual_mean_price <- mean(data$`Y house price of unit area`, na.rm = TRUE)
+print(paste("Actual Mean House Price:", actual_mean_price))
+
+```
+
+```{R P2.3 Log models}
+
+# Create log-transformed versions of the variables, add 1 to avoid log 0 where necessary
+data$log_price <- log(data$`Y house price of unit area`)
+data$log_age <- log(data$`X2 house age` + 1)
+data$log_distance <- log(data$`X3 distance to the nearest MRT station` + 1)
+
+# Fit the linear model using the log-transformed variables
+model_log <- lm(log_price ~ log_age + log_distance + 
+                `X4 number of convenience stores` + 
+                `X5 latitude` + `X6 longitude`, data = data)
+
+# View the summary of the new model
+summary(model_log)
+
+
+# Fit the linear model with log-transformed Y and original X predictors
+model_log_y <- lm(log_price ~ 
+                  `X1 transaction date` + 
+                  `X2 house age` + 
+                  `X3 distance to the nearest MRT station` + 
+                  `X4 number of convenience stores` + 
+                  `X5 latitude` + 
+                  `X6 longitude`, data = data)
+
+# Print the summary of the log Y model
+summary(model_log_y)
+
+```
+```{R P2.4, fig.width=8,fig.height=8}
+
+# Diagnostic plots on log Y model
+par(mfrow = c(2, 2))  # Arrange plots in 2x2 layout
+plot(model_log_y)
+
+# Extract 99% confidence intervals for model coefficients
+confint(model_log_y, level = 0.99)
+
+# Checking for potential multicollinearity using VIF
+vif(model_log_y)
+
+# Create a new observation with the mean of each predictor
+new_obs <- as.data.frame(t(colMeans(data[, !names(data) %in% c("Y house price of unit area", "log_price")])))
+
+# Predict house price with a 90% confidence interval using log model
+mean_prediction_log_y <- predict(model_log_y, newdata = new_obs, interval = "confidence", level = 0.90)
+print(mean_prediction_log_y)
+mean_prediction_readjusted <- exp(mean_prediction_log_y)
+print(mean_prediction_readjusted)
+print(paste("Actual Mean House Price:", actual_mean_price))
+
+```
+
+*Using function `lm` fit model of outcome as linear function of all predictors in the dataset. Present and discuss diagnostic plots. Report 99% confidence intervals for model parameters that are statistically significantly associated with the outcome and discuss directions of those associations. Obtain mean prediction (and corresponding 90% confidence interval) for a new observation with each attribute set to average of the observations in the dataset. Describe evidence for potential collinearity among predictors in the model.*
+
+**Discussions P2:**
+
+For the simple linear model with no transformation, the diagnostic plots show:
+
+- Residuals vs. Fitted Plot shows some curvature, suggesting a non-linear relationship and a transformation may improve fit
+- QQ plot deviates from the straight line at both tails with an upper outlier (point 271), so residuals are not normally distributed
+- Scale-Location shows the spread of residuals increase with fitted values, which indicates heteroscedasticity
+- Residuals vs leverage show some points with high leverage, but no clear outliers significantly influencing the model
+
+As we see from the 99% CI intervals, all intervals do not contain 0 except X6 longitude, which is not statistically significant at the 99% (or 95% level as also seen in the summary output) level.
+
+Transaction date, number of convenience stores and latitude are positively correlated predictors, potentially because:
+
+- X1 Transaction Date: later houses are more expensive due to inflation and a uptrending market cycle in 2012/2013
+- X4 Number of convenience stores: The more convenience closeby the more pricy the house, makes sense
+- X5 Latitude: This is a bit indirect but the larger cities in Taiwan tend to be more north up in larger latitudes, with Taipei capital being nearly most north at c. 25 degrees N
+
+X2 House age and X3 distance to MTR are negatively correlated predictors because the older/farther the distance to MTR, the cheaper the house would be, as intuitively understood.
+
+The predicted mean is very close to the actual mean despite an R^2 value of only 0.5824 for the model.
+
+The VIF values show no great multicollinearity to be worried about except X3 distance to the nearest MTR at a value of 4.32, could be correlated with other distance metrics.
+
+Commenting on the log Y adjusted model:
+
+(Interestingly log adjusting age and distance not only improves R^2 to 0.7187 but also makes X6 longitude a significant predictor. We will not be using this going forward however and only using the log transformed Y only model.)
+- All 4 diagnostic plots show some improvement but are not perfect.  Residuals vs. Fitted Plot shows two separate clusters, QQ plot still has heavy tails, etc. Overall model R^2 has improved to 0.6858.
+- Significant variables and relationship directions remained the same.
+- VIF factor magnitudes did not change much, still no factors above 5.
+- New mean value prediction (compare to actual mean unit price) has slightly more error but we used the log Y transformed model to make the prediction then exponentiated the prediction which may make a slight difference.
+
+# Sub-problem 3: choose optimal models by exhaustive, forward and backward selection (points: 20/25 – graduate/undergraduate)
+
+*Use `regsubsets` from library `leaps` to choose optimal set of variables for modeling real estate valuation and describe differences and similarities between attributes deemed most important by these approaches.*
+
+```{R p3.1, fig.width=9,fig.height=6}
+
+# Subset the data: Include only predictors and target variable
+# As we mentioned we will used the log Y transformed price we are doing so here
+subset_data <- data[, c("log_price", 
+                        "X1 transaction date", 
+                        "X2 house age", 
+                        "X3 distance to the nearest MRT station", 
+                        "X4 number of convenience stores", 
+                        "X5 latitude", 
+                        "X6 longitude")]
+
+# Check the structure of the subsetted data
+str(subset_data)
+
+summaryMetrics <- NULL
+whichAll <- list()
+# for each of the three methods we want to try as instructed:
+for ( myMthd in c("exhaustive", "backward", "forward") ) {
+  rsRes <- regsubsets(`log_price`~.,data=subset_data,method=myMthd,nvmax=6)
+  summRes <- summary(rsRes) 
+  whichAll[[myMthd]] <- summRes$which # get the variable choices for the current method
+  # and also extract from the summary all the metrics we are interested in:
+  for ( metricName in c("rsq","rss","adjr2","cp","bic") ) {
+    summaryMetrics <- rbind(summaryMetrics,
+                           data.frame(
+                             method=myMthd,
+                             metric=metricName,
+                             nvars=1:length(summRes[[metricName]]),
+                             value=summRes[[metricName]])
+                           )
+  }
+}
+
+#... and now plot everything:
+ggplot(summaryMetrics,aes(x=nvars,y=value,shape=method,colour=method)) + 
+  geom_path() + 
+  geom_point() + 
+  facet_wrap(~metric,scales="free") +   
+  theme(legend.position="top")+
+  theme_bw()
+
+summRes
+```
+
+```{r P3.2, fig.width=6, fig.height=6}
+old.par <- par(mfrow=c(3,1),ps=16,mar=c(2,25,2,8))
+# for each method used:
+for ( myMthd in names(whichAll) ) {
+  image(1:nrow(whichAll[[myMthd]]), 
+        1:ncol(whichAll[[myMthd]]),
+        whichAll[[myMthd]],
+        xlab="N(vars)", ylab="",
+        xaxt="n", yaxt="n", # suppress axis plotting, will draw axes manually later
+        breaks=c(-0.5,0.5,1.5),
+        col=c("white","gray"),main=myMthd)
+  axis(1,1:nrow(whichAll[[myMthd]]),rownames(whichAll[[myMthd]]))
+  # use variable names as axis tick labels:
+  axis(2,1:ncol(whichAll[[myMthd]]),colnames(whichAll[[myMthd]]),las=2)
+}
+par(old.par)
+```
+**Discussions P3:**
+
+I used code similar to that used in a prior assignment here.
+
+BIC and Cp seem to favor a slightly simpler model with 4-5 variables, while Adjusted R-squared, rsq and rss suggest 5-6 variables might also be reasonable. Since bic and cp penalize complexity more, a model with 4-5 variables might be a good balance between simplicity and performance.
+
+The results suggest that a model with around 5 variables is optimal across multiple metrics. More than 5 variables likely introduces complexity without significantly improving the model’s performance.
+
+All three selection methods seem to converge on similar variable selection outcomes. This is a good sign because it indicates consistency in the selection process. Exhaustive evaluates all possible models whereas forward and backward are more greedy approaches. The fact that they produce similar results suggests that the forward and backward methods are working well and the results are quite clear, potentially with less computational cost.
+
+In terms of attributes, all deem X3 distance to the nearest MRT station the most important predictor, followed by X5 latitude (As discussed prior larger cities are up north in Taiwan), then house age, number of convenience stores, transaction date and longitude in that order in terms of predictor importance.
+
+
+# Sub-problem 4: optimal model by resampling (points: 20/25 – graduate/undergraduate)
+
+*Use cross-validation or any other resampling strategy of your choice to estimate test error for models with different numbers of variables.  Compare and comment on the number of variables deemed optimal by resampling versus those selected by `regsubsets` in the previous task.*
+
+```{r P4.1}
+# takes `regsubsets` object (as returned by function `regsubsets()`), and also
+# the model "id" - since regsubsets stores the best selections for *each* 
+# model size the function was run for! Applies selected best model to the newdata
+# and returns the predictions
+predict.regsubsets <- function (object, newdata, id, ...){
+  form=as.formula(object$call [[2]]) # get the formula used for model selection
+  # convert data into model matrix (will take care of 1-hot encoding as needed)
+  mat=model.matrix(form,newdata)  
+  coefi=coef(object,id=id) # get the fitted coefficients of the (best) model of the given size
+  xvars=names (coefi) # figure out which variables are actually used by that model
+  mat[,xvars] %*% coefi # extract just those variables from the data and compute predictions
+}
+```
+
+
+```{r P4.2a,fig.width=6,fig.height=6}
+dfTmp <- NULL
+whichSum <- array(0,dim=c(6,7,3),
+  dimnames=list(NULL,colnames(model.matrix(`log_price`~.,data=subset_data)),
+     c("exhaustive", "backward", "forward")))
+# Split data into training and test 50 times:
+nTries <- 50
+for ( iTry in 1:nTries ) {
+  bTrain <- sample(rep(c(TRUE,FALSE),length.out=nrow(subset_data)))
+  # Try each method available in regsubsets
+  # to select the best model of each size, using training data only:
+  for ( jSelect in c("exhaustive", "backward", "forward") ) {
+    rsTrain <- regsubsets(`log_price`~.,subset_data[bTrain,],nvmax=6,method=jSelect)
+    # Add up variable selections: each cell of the resulting matrix will literally
+    # count *how many times* each particular variable was selected for each 
+    # particular model size across all the random resamplings of the data:
+    whichSum[,,jSelect] <- whichSum[,,jSelect] + summary(rsTrain)$which
+    # Calculate test error for each set of variables (each model size)
+    # using predict.regsubsets implemented above:
+    for ( kVarSet in 1:6 ) {
+      # make predictions:
+      testPred <- predict(rsTrain,subset_data[!bTrain,],id=kVarSet)
+      # calculate MSE: (Had a list issue so had to unlist first)
+      true_values <- unlist(subset_data[!bTrain, "log_price"])
+      mseTest <- mean((testPred-true_values)^2)
+      # add to data.frame for future plotting:
+      dfTmp <- rbind(dfTmp,data.frame(sim=iTry,sel=jSelect,vars=kVarSet,
+      mse=c(mseTest,summary(rsTrain)$rss[kVarSet]/sum(bTrain)),trainTest=c("test","train")))
+    }
+  }
+}
+
+
+# plot MSEs by training/test, number of 
+# variables and selection method:
+ggplot(dfTmp,aes(x=factor(vars),y=mse,colour=sel)) + geom_boxplot()+facet_wrap(~trainTest)+theme_bw()
+
+```
+```{r P4.2b}
+# Calculate the average MSEs and print
+average_mse <- dfTmp %>%
+  group_by(vars, sel, trainTest) %>%
+  summarise(avg_mse = mean(mse))
+
+print(average_mse)
+```
+
+```{r P4.3,fig.width=8,fig.height=8}
+#Following example from preface
+old.par <- par(mfrow=c(3,1),ps=16,mar=c(2,25,2,8))
+for ( myMthd in dimnames(whichSum)[[3]] ) {
+  tmpWhich <- whichSum[,,myMthd] / nTries
+  image(1:nrow(tmpWhich),1:ncol(tmpWhich),tmpWhich,
+        xlab="N(vars)",ylab="",xaxt="n",yaxt="n",main=myMthd,
+        breaks=c(-0.1,0.1,0.25,0.5,0.75,0.9,1.1),
+        col=c("white","gray90","gray75","gray50","gray25","gray10"))
+  axis(1,1:nrow(tmpWhich),rownames(tmpWhich))
+  axis(2,1:ncol(tmpWhich),colnames(tmpWhich),las=2)
+}
+par(old.par)
+```
+
+**Discussions P4:**
+
+We use the sample() function and code similar to the last assignment to resample with 50 tries, splitting randomly into training and test sets and then run regsubsets again, computes predictions on the test set, tracks MSE and plots
+them over different number of variables for comparison.
+
+Again, we see no differences between forward, backward and exhaustive methods in this specific case in predictor inclusion and MSE plots.
+
+Across all methods, the MSE on the training set decreases as the number of variables increases from 1 to 5 as seen in the test vs train MSE plots. This is expected because adding more variables tends to improve the model's fit to the training data. However, the improvement speed starts to decrease and plateau at around 4-5 predictors. 
+
+For the 6th additional predictor there the Exhaustive method train average MSE only decreases very slightly from 0.04877709 to 0.04866603, and the test MSE actually increases slightly from 0.04954143 to 0.04984490 (Read from table, too fine to see on chart). This indicates overfitting and that 5 variables are optimal and enough, confirming the findings in P3 that 5 variables are optimal, and perhaps echoing the findings earlier in P2 that X6 longitude is not a significant predictor and should be excluded.
+
+We also see from the variable inclusion plots for the 3 methods that while distance to the nearest MRT station is the most important predictor, we gain insight that sometimes X2 house age and X4 number of convenience stores are as or more important than X5 latitude through resampling vs the simple observation from P3 that X5 is always the second most important predictor to be included.
+
+
+# Sub-problem 5: variable selection by lasso (points: 15/15(extra) – graduate/undergraduate)
+
+*Use regularized approach (i.e. lasso) to model property valuation.  Compare resulting models (in terms of number of variables and their effects) to those selected in the previous two tasks (by `regsubsets` and resampling), comment on differences and similarities among them.*
+
+```{r P5,fig.width=6,fig.height=6}
+
+# Define X and Y
+x <- model.matrix(log_price ~ ., data = subset_data)[,-1]
+head(x)
+y <- unlist(subset_data[,"log_price"])
+
+# Run Lasso with other than default levels of lambda
+lassoRes <- glmnet(x,y,alpha=1)
+plot(lassoRes)
+cvLassoRes <- cv.glmnet(x,y,alpha=1,lambda=10^((-100:0)/20))
+plot(cvLassoRes)
+```
+
+```{r}
+# Lasso coefficients shown
+predict(lassoRes,type="coefficients",s=cvLassoRes$lambda.1se)
+predict(lassoRes,type="coefficients",s=cvLassoRes$lambda.min)
+```
+
+**Discussions P5:**
+
+From the Lasso path plot, we see one variable that is very strong (blue line) consistently and even when there is strong regularization (likely X3 distance to the nearest MRT station as seen prior, selected as the most important predictor). As we move to the right, more coefficients start to increase from zero, indicating that Lasso is selecting more variables to be included in the model as expected. 
+
+Looking at the MSE vs log(lambda) plot, we see an optimal log(lambda) of around -7 with 6 (all) predictors and the 1 standard error around 4 predictors. Printing this out, we see X1 transaction date and X6 longitude has been excluded in the 1se scenario as predictors, this is similar to prior results where X6 longitude has been excluded, and this time X1 transaction date has also been excluded, which is the next weakest predictor looking at the regsubsets selection in P3 and resampling in P4.
+
+Overall, the 1se model that balances simplicity and predictive power is very similar to results prior, but also excludes X1 transaction date, which the prior regsubsets hints at could be done for balance as well.
+
+# Extra points problem: using higher order terms (points: 10(extra)/10(extra) – graduate/undergraduate)
+
+*Evaluate the impact of adding non-linear terms to the model.  Describe which terms, if any, warrant addition to the model and what is the evidence supporting their inclusion.  Evaluate, present and discuss the effect of their incorporation on model coefficients and test error estimated by resampling.*
+
+```{R P6.1}
+
+# Note that some of the cross terms are very large numbers in the millions, which created problems I had to debug, so using the scale() function here on predictors
+response <- subset_data$log_price
+pred_data <-  as.data.frame(scale(subset_data[,-1], center = TRUE, scale = TRUE))
+scaled_data <- cbind(log_price=response, pred_data)
+
+# Create a function to generate quadratic terms
+generate_quadratic_terms <- function(data, predictors) {
+  for (i in 1:length(predictors)) {
+    for (j in i:length(predictors)) {
+      # Create pairwise product terms and add them to the dataset
+      new_col_name <- paste(predictors[i], predictors[j], sep = "X")
+      data[[new_col_name]] <- data[[predictors[i]]] * data[[predictors[j]]]
+    }
+  }
+  return(data)
+}
+
+# Apply the function to the data to generate the quadratic terms
+predictors <- names(subset_data)[2:ncol(subset_data)]
+myDat_quadratic <- generate_quadratic_terms(scaled_data, predictors)
+
+# View the updated dataset with quadratic terms
+head(myDat_quadratic)
+print(names(myDat_quadratic))
+
+```
+```{R P6.2}
+
+# Initialize vectors to store the number of predictors and corresponding training errors
+num_predictors <- 1:(ncol(myDat_quadratic) - 1)
+train_errors <- numeric(length(num_predictors))
+
+# Loop over the number of predictors to fit models incrementally
+for (i in num_predictors) {
+  # Fit a linear model using the first 'i' predictors
+  model <- lm(log_price ~ ., data = myDat_quadratic[, 1:(i + 1)])
+  
+  # Calculate training error
+  train_errors[i] <- sqrt(mean((myDat_quadratic$log_price - predict(model, myDat_quadratic[, 1:(i + 1)]))^2))
+}
+
+# Calculate the error when predicting all outcomes as the average
+avg_error <- sqrt(mean((myDat_quadratic$log_price - mean(myDat_quadratic$log_price))^2))
+
+# Plot training error as a function of the number of predictors
+plot(num_predictors, train_errors, type = "b", col = 'blue', pch = 19,
+     xlab = "Number of Predictors", ylab = "Training Error",
+     main = "Training Error vs. Number of Predictors",
+     ylim = c(min(train_errors), max(avg_error, max(train_errors))))
+abline(h = avg_error, col = "red", lty = 2)
+
+# Add a legend to indicate the error from predicting the average
+legend("topright", legend = c("Training Error", "Average Prediction Error"),
+       col = c("blue", "red"), lty = c(1, 2), pch = c(19, NA))
+
+```
+
+```{R P6.3}
+bootTrainTestErrFundraising <- function(inpDat, responseVar="log_price", nBoot=100) {
+  # Make sure response variable is in the first column and predictors follow
+  inpDat <- inpDat[, c(responseVar, setdiff(colnames(inpDat), responseVar))]
+  
+  # Matrices to store bootstrap training and test errors
+  errTrain <- matrix(NA, nrow=nBoot, ncol=ncol(inpDat) - 1)
+  errTest <- matrix(NA, nrow=nBoot, ncol=ncol(inpDat) - 1)
+  
+  # Vector to store training error of each model fitted on all observations
+  allTrainErr <- numeric()
+  
+  # Loop over models with increasing number of predictors
+  for (iTmp in 2:ncol(inpDat)) {
+    # Fit model with iTmp - 1 predictors
+    lmTmp <- lm(as.formula(paste(responseVar, "~ .")), inpDat[, 1:iTmp])
+    
+    # Training error on the full dataset
+    allTrainErr[iTmp - 1] <- sqrt(mean((inpDat[[responseVar]] - predict(lmTmp))^2))
+    
+    # Bootstrap resampling
+    for (iBoot in 1:nBoot) {
+      # Bootstrap sample
+      tmpBootIdx <- sample(nrow(inpDat), nrow(inpDat), replace=TRUE)
+      lmTmpBoot <- lm(as.formula(paste(responseVar, "~ .")), inpDat[tmpBootIdx, 1:iTmp])
+
+      
+      # Training error on bootstrap sample
+      errTrain[iBoot, iTmp - 1] <- sqrt(mean((inpDat[tmpBootIdx, responseVar] - predict(lmTmpBoot))^2))
+      
+      # Test error on the observations not in the bootstrap sample
+      errTest[iBoot, iTmp - 1] <- sqrt(mean((inpDat[-tmpBootIdx, responseVar] -
+                                             predict(lmTmpBoot, newdata=inpDat[-tmpBootIdx, 1:iTmp]))^2))
+    }
+  }
+  
+  # Return training and test errors
+  list(bootTrain=errTrain, bootTest=errTest, allTrain=allTrainErr)
+}
+
+```
+
+
+```{R P6.4}
+result <- bootTrainTestErrFundraising(myDat_quadratic, responseVar="log_price", nBoot=100)
+
+# Function for plotting used in prior assignments
+plotBootRegrErrRes <- function(inpRes,inpPchClr=c(1,2,4),...) {
+  matplot(1:length(inpRes$allTrain),cbind(inpRes$allTrain, 
+                                          colMeans(inpRes$bootTrain),
+                                          colMeans(inpRes$bootTest)
+                                          ),
+          pch=inpPchClr,col=inpPchClr,lty=1,type="b",xlab="Number of predictors",ylab="Regression error",...)
+  legend("topright",c("train all","train boot","test boot"),
+         col=inpPchClr,text.col=inpPchClr,pch=inpPchClr,lty=1)
+}
+
+# Now using plotBootRegrErrRes to plot
+plotBootRegrErrRes(result, main="Fundraising Dataset Bootstrap Errors",
+                   ylim=c(min(c(colMeans(result$bootTrain), colMeans(result$bootTest))),
+                          max(c(colMeans(result$bootTrain), colMeans(result$bootTest)))))
+
+```
+ 
+```{R 6.5}
+# Linear model using all cross terms
+model <- lm(log_price ~ ., data = myDat_quadratic)
+print(summary(model))
+```
+
+**Discussions Extra points problem:**
+
+We see in the plots above that included 27 predictors terms (21 new cross terms including square terms and 6 original predictors) decreases regression error in training.
+
+In the bootstrap errors plot, we see that the test bootstrap errors start to decrease until around 10-15 predictors and then flatline, fluctuate or even increase as more predictors are included as the gap between train and test errors increases also. This means around 10 predictors is optimal when evaluating cross terms.
+
+Looking at the regression summary, in addition to the 5 predictors originally significant, we also have cross terms between strong predictors also signficiant, such as X3 cross X4, X3 cross X5, and X4 cross X5 being significant, which makes sense given X3 was deemed the strongest predictor in prior analysis and X5 followed. 
+
+X2 cross X2 was also included as house age might be important enough as a larger value. But there are also odd elements to the cross terms, for example I suspect usually scaling doesn't affect the regression much but house age tends to be a very small number vs say, distance to the nearest MRT, hence the square term shows up. Another observation of interest is that price is inversely correlated with X3 (distance to MTR), but positive with X5 (latitude), adn the cross terms are thus a mix of a positive and a negative (hence the negative coefficient for the cross-term). This may indicate over-fitting and we do not in fact need these cross terms. Though the standard error is lower vs the original log model and R^2 of 0.7733 is higher than the original's 0.6858, thus there is also improvement.
+
+We also mentioned in P1 discussion that interactions terms that make most intuitive sense to be explored are 1) between latitude and longitude and 2) distance to MTR and no. of convenience stores, as both are accessibility metrics. However, only the latter shows here as signficant since we later discovered longitude is not a significant predictor.

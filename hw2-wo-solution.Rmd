@@ -1,0 +1,354 @@
+---
+title: 'CSCI E-63C: Week 2 Problem Set'
+output:
+  html_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Preface
+
+One of the first steps in the analysis of a new dataset, often as part of data QC and cleaning, involves generating high level summaries. One needs to look at the numbers of observations and of attributes (variables), understand which variables are predictors and which ones are (could be?) outcomes, examine distributions, ranges, and percentages of missing values in all the varianbles. Next it is important to assess the strength of correlation among the predictors and between the predictors and the outcome(s), etc.  
+
+It is usually at this stage when we develop our initial intuition about the level of difficulty of the problem and the challenges presented by a particular dataset. This is when (and how) we form our first set of ideas as to how we might want to approach the problem. Additionally, there are many multivariate methods under unsupervised learning umbrella that can also be extremely useful in these settings (we will introduce such methods later in the course). But first things first, and here we are going to start with loading a few datasets into R and exploring their attributes in the form of univariate (e.g. "single-variable") summaries and bivariate ("two-variable") plots and contingency tables (where applicable).
+
+For this problem set we use datasets available from the [UCI machine learning repository](https://archive.ics.uci.edu/ml/index.php), or subsets thereof cleaned up and pre-processed for the instructional purposes. For convenience and in order to avoid the dependence on UCI ML repository availability, we have copied the datasets into the course Canvas website and you can downlkoad them from the assignment page. Once you have downloaded the data onto your computer, they can be imported into R using function `read.table` with appropriate optional arguments. The most useful/relevant options include: `sep` -- defining field separator and `header` -- letting `read.table` know whether the first line in the text file contains the column names or the first row of data (see help page for the full list of options). 
+
+In principle, `read.table` can even use URL as a path and read the data over the network, but we do ask you to download those datasets from Canvas website to your local computer and use `read.table` with appropriate paths to the local files. This way you will not be dependent on the network connection and because of the pre-processing involved, 
+
+The simplest thing is probably to copy the data to the same directory where your .Rmd file is, in which case just the file name passed to `read.table` should suffice (or you can always use relative of full qualified path of course).  As always, please remember, that `help(read.table)` (or, `?read.table` as a shorthand) will tell you quite a bit about this function and its parameters.
+
+For those datasets that do not have column names included in their data files, it is often convenient to assign them explicitly. Please note that for some of these datasets categorical variables are encoded in the form of integer values (e.g. 1, 2, 3 and 4) and when loading such data R will interpret those columns by default as quantitative, numeric variables (how could it possibly known unless told explicitly!). This clearly would be wrong conceptually (as "category number 4" is not necessarily "twice as much" as "category number 2" - these are just sone *group IDs* not *amounts*). Note also that the behavior of many R functions depends on the type of the input variables (quantitative/numeric vs categorical/factor).
+
+The code excerpts and their output presented below illustrate some of these most basic steps as applied to one of the datasets available from UCI. The homework problems follow after that -- they will require you to apply similar kind of approaches in order to generate high levels summaries of a few other datasets.
+
+### Haberman Survival Dataset
+
+Note how the `summary` function computes a 5-number summary.  The variable `surv` (survival) is actually a binary categorical variable (yes/no), encoded as 1/2 (in that order, see the `haberman.names` file). By default, R assumed that those 1 and 2 values are just some numbers (a quantitative variable), so the `summary` command computes range (quite useless here) etc. If we re-code the values in that column as "yes"/"no" text strings, this does not help much: now `summary` does not know what to do with them at all (and just tells us that the column contains 306 of some text string values). And finally, when we explicitly make that column a factor (i.e. declare those text strings to be the levels of a categorical variable), the `summary` command starts counting the numbers of occurences of different levels.
+
+```{r habRead}
+habDat <- read.table("haberman.data",sep=",")
+colnames(habDat) <- c("age","year","nodes","surv")
+summary(habDat$surv)
+# make sure you understand how we convert a column of 1/2 values into "yes"/"no" here:
+# we are indexing into a 2 -element vector `c("yes","know")` with the vector of indices
+# which is the column data. We get back the vector of the same length as the *index* (i.e.
+# we get back as many values as we asked for!), and in every position where the index was saying
+# 1 (or 2), the returned vector will have "yes" (or "no", respectively), because are the values
+# at those positions in the vactor we are indexing into:
+habDat$surv <- c("yes","no")[habDat$surv]
+summary(habDat$surv)
+habDat$surv <- factor(habDat$surv)
+summary(habDat$surv)
+```
+
+Below we show xy-scatterplots of two variables (patient's age and node count), with color indicating their survival past 5 years. The first example uses basic plotting capabilities in R (built-in base graphics package), while the second one shows how the same result can be achieved with `ggplot2` package. 
+
+Note that in this particular example we additionally choose to stratify the data into two separate scatterplots by the survival categorical variable. The reason is purely aesthetic one: since we do indicate distinct classes of patients with different colors it would be entirely possible (and meaningful) to put all the data into a single scatterplot, same way it was done in class. However, the data at hand do not readily separate into (visually) distinct groups, at least in the projection on the two variables chosen here. Hence, there would be too much overplotting (exacerbated by the fact that node counts and years take on integer values only, so we'd probably need to add some jitter). It would be just more difficult to notice that the subset of data shown on the right (`survival=yes`) is in fact much more dense near `nodes=0`. It is certainly OK to choose the type of visualization that provides the most insight into the data at hand!
+
+```{r habPlot,fig.height=5,fig.width=10}
+# idiomatic expression: split the figure area into subplots, 1 row/ 2 columns in this case, 
+# additionally change the text pointsize for all future plots; save all the old graphics device settings
+oldPar <- par(mfrow=c(1:2),ps=16)
+
+for ( iSurv in sort(unique(habDat$surv)) ) {  # for iSurv in ("no", "yes")
+  
+    # another trick: function plot() will auto-adjust plot limits to the data being plotted. We
+    # want the two plots to have the same limits though. One way of doing it is 
+    # as shown below: just use the plot() command on the *whole* dataset, thus
+    # letting it set the same limits for every plot automatically, but use plot type "n"
+    # which results in all the axis being set up but NO DATA being actually plotted. Then,
+    # use the points() command to add to that pre-set plot just the datapoints that we actually want 
+    # to show. 
+    # ALTERNATIVELY: we could use range(habDat$age) and range(habDat$nodes) to get the full ranges
+    # of the respective vatiables, then plot with a single plot() command using xlim= and ylim=
+    # optional arguments to set the axis limits explicitly.
+    plot(  habDat[,c("age","nodes")], type="n", main=paste("Survival:",iSurv))
+  
+    # vector of TRUE/FALSE values, indicating whether we want each particular data point in the current plot.
+    # Here, we select only the observations with survival status equal to the current value of loop variable iSurv:
+    selection <- habDat$surv==iSurv
+    
+    # Add observations with survival status equal to iSurv to the plot. Set their color and shape
+    # according to the survival status of each observation. Here, we are using the fact that
+    # 'surv' is a factor, so its distinct levels will be enumerated (i.e. encoded with integers).
+    # And we can use an integer to specify the plotting color (and point shape too), this would just 
+    # refer to the currently installed default palette. In this particular case *all* the points in 
+    # each given plot will have the same color and shape, since the plots themselves are already 
+    # stratified by levels of 'surv'. But this trick will work in every situation.
+    # Note that, interestingly (and unfortunately) enough, when plot() interprets the col= argument
+    # and gets a factor, it will automatically use the factor levels (1, 2, 3, ...), not the actual values
+    # ("yes"/"no" - those can't be interpreted as colors of course); but the point shape argument pch=
+    # does not do it! This is why we had to explicitly force the argument to pch= into integer (to get the
+    # factor level for each observation as a factor), but did not have to bother with the color. Alas.
+    # Experimantation and debugging will get you there, eventually...
+    points(habDat[selection,c("age","nodes")], col=habDat$surv[selection], pch=as.integer(habDat$surv[selection]))
+}
+
+# return graphics device to all previous settings, including
+# single plotting area (i.e. we remove the split of the area into subplots, in particular)
+par(oldPar)
+```
+
+Same plot, using `ggplot2` library. The latter uses a paradigm that's quite different. It works by building up "layers"
+that you need to "add", or "stack" on top of each other (literally, using a '+' operator, to build up the object holding
+the full description of your graph). We start with the "data" layer by specifying the dataset to work with and setting up
+so-called "aesthetics" - the mappings from the data columns onto x and y variables in the plot, colors, shapes, etc.
+
+In the example below, the aethetics indicate that for each data point (observation) from the data table `habDat`, the values in `age` and `node` columns should become the x and y coordinates, respectively, of the point in the plot, the value from the `surv` column should become the color (it's a factor, so in this case `ggplot` will assign differnt colors to different layers), and the same surv value should also affect the shape of each plotted point (again, each level of the factor will be automatically assigned a different shape). 
+
+But that first line only sets up the mappings and does not plot anything. Next we add the `geom_point()` layer, and by doing so we explicitly specify that now we want to draw points (a scatterplot) using those mappings.
+
+Then we add a command (`facet_wrap`) that says we actually want to take the scatterplot we built so far and *split* it into multiple subplots, each corresponding to a unique value of the variabe `surv` (note that this should be specified as a "formula", using `~`).
+
+Finally, we add a layer of some plot presentation definitions by specifying a "theme" (try removing the last layer and generating a plot without `theme_bw()`). The command `theme_bw()` is a convenience shortcut/wrapper, that modifies many things
+at once. The underlying low(er)-level command that gives you fine-grained control over all the aspects of the figure presentation (axis label, tick label, and title fonts, sizes, and color, text angles, figure background color, and what not) is `theme()` - just add it to your `ggplot` object with any figure presentation modifications you like (see help).
+
+```{r habPlotGG,fig.height=3,fig.width=6}
+ggplot(habDat,aes(x=age,y=nodes,colour=surv,shape=surv)) + 
+  geom_point() + 
+  facet_wrap(~surv) + 
+  theme_bw()
+```
+
+It seems that higher number of nodes might be associated with lower probability of survival: note that despite the fact that in both survival outcomes, yes and no, we have patients with large node counts and the distributions *above* node count of ~10 look pretty much the same (and structureless too), the `survival=yes` outcome clearly has much higer fraction of low node count cases, as expected. One attempt to quantify this relationship might involve testing relationship between indicators of survival and count of nodes exceeding arbitrarily chosen cutoffs (e.g. zero or 75th percentile as shown in the example below).   
+In the example below we first generate a 2-way matrix that cross-tabulates the respective counts of cases with all combinations of survival yes/no and node count zero/non-zero values. As you can see, when `nodes=0` is true, the survival yes/no outcomes are split as 117/19, while for subset of cases where `nodes=0` is false (i.e. non-zero node count), the survival yes/no values are split as 108/62, which looks much worse (you can check that this difference in survival probability is indeed statistically significant; which statistical test would you use for that?). The second part of the code performs pretty much the same task, except that we stratify the patients with respect to node counts as being above or below 75% percentile, instead of being zero or non-zero (and in that case we see that the survival for the patienst with node count in top 25% percentile is aproximately 50/50, while for the rest of the patients the 5 year survival is 178 vs 39, which is >80% of cases!): 
+
+
+```{r habTbl}
+habDat$nodes0 <- habDat$nodes==0
+table(habDat[, c("surv","nodes0")])
+habDat$nodes75 <- habDat$nodes>=quantile(habDat$nodes,probs=0.75)
+table(habDat[, c("surv","nodes75")])
+```
+
+Please feel free to model your solutions after the examples shown above, while exercising necessary judgement as to which attributes are best represented as continuous and which ones should be represented as categorical, etc.  The descriptions of homework problems provide some guidance as to what is expected, but we leave some of those choices up to you. Making such calls is an integral part of any data analysis project and we will be working on advancing this skill throughout this course.
+
+**Lastly -- do ask questions!  Our discussion board is the best for that**
+
+# Wireless Indoor Localization Data Set (points: 30/30 -- graduate/undergraduate)
+
+This dataset presents an example of classification problem (room identity) using continuous predictors derived from the strengths of several WiFi signals on a smartphone. More details about underlying data can be found in corresponding [dataset description](http://archive.ics.uci.edu/ml/datasets/Wireless+Indoor+Localization) at UCI ML website. To load data into R please use data file `wifi_localization.txt` available both at the course website and/or in UCI ML dataset repository.
+
+```{r P2}
+# Load the dataset 
+column_names <- c("Signal1", "Signal2", "Signal3", "Signal4", "Signal5", "Signal6", "Signal7", "RoomID")
+wifi_data <- read.table("wifi_localization.txt", sep="", header=FALSE, col.names=column_names)
+
+# Check structure of the data
+dim(wifi_data)
+
+# Number of rows and columns 
+nrow(wifi_data) 
+ncol(wifi_data) 
+
+str(wifi_data)
+summary(wifi_data)
+```
+
+```{R P2.2}
+
+# Convert RoomID to a factor for visualization
+wifi_data$RoomID <- factor(wifi_data$RoomID)
+
+# Generate pairwise scatterplots with ggplot
+pairs(wifi_data[, 1:7], col=wifi_data$RoomID, pch=20, main="Pairwise Scatterplots of WiFi Signal Strengths by Room")
+
+```
+
+* Once the dataset in loaded into R, please name the data set attributes (variables) appropriately. You have to do it *in your code* (i.e. programmatically, do *not* edit the data file before loading by adding the header line).
+* Then, determine the number of variables (explain which ones are predictors and which one is the outcome) and observations in the dataset (R functions such as `dim`, `nrow`, `ncol` could be useful for this)
+* Generate summary of the data using `summary` function in R\
+* Generate pairwise XY-scatterplots of each pair of continuous predictors, while indicating the outcome using color and/or shape of the symbols (you may find it convenient to use `pairs` plotting function). 
+* Describe your observations and discuss which of the variables are more likely to be informative with respect to discriminating these rooms, i.e. predicting, from the measured signal strenghts, which room the phone is in. What we mean is: literally just look at the plots, for the lack of better methods that we have not developed just yet, and describe which variables *you think* will be more useful for letting us know which room the smartphone is in. 
+
+The last question is not about building a formal classier model (we will get there in due time), but about *looking* at the data and trying to understand them and to build some intuition/expectations about them.
+
+**Answer:**
+
+Signals 1, 2, 4 appear to show the most distinct clustering based on room identity, with relatively clear separation between the different colored clusters representing different rooms, so I would choose those. Signals 3,5,6,7 seem to show significant overlap and so may be less useful in classification.
+
+* Finally, please comment on whether given the data at hand the problem of identifying the room based on the strength of the WiFi signal appears to be an easy or a hard one to solve. Try guessing, using your best intuition, what could be an error in predicting room identity in this dataset: 50%, 20%, 10%, 5%, 2%, less than that?  Later in the course we will work with this dataset again to actually develop such a classifier, and at that point you will get a quantitative answer to this question.
+
+**Answer:**
+
+It does not look easy. Given the amount of overlap, I would guestimate 10-20% error in predicting room identity in this dataset.
+
+Once again, what we are trying to achieve at this time is just to make you *think* about the data and to provide a (guesstimate) answer just from visual inspection of the scatterplots. Thus, there is no wrong answer at this point, just try your best, explain your (qualitative) reasoning, and make a note of your answer, so you can go back to it several weeks later.  
+
+Please reflect on a potential use of such model (predicting room identity on the basis of WiFi signal strength) and discuss some of the limitations that the predictive performance of such a model may impose on its utility. Suppose that we can never achieve perfect identification (it's statistics after all), so we will end up with some finite error rate. For instance, if this model was integrated into a "smart home" setup that turns the light on or off depending on which room the smartphone is in, how useful would  be such model if its error rate was, say, 1%, 10% or 50%?  
+
+**Answer:**
+
+1% error rate: This would be highly useful, as the system would almost always correctly identify the room, making it very reliable for turning lights on or off.
+
+10% error rate: This could still be useful, occasional mistakes might cause some frustration with turning on lights in wrong room but one can quickly get used to it habitually. It would be acceptable in non-critical applications.
+
+50% error rate: Would not be useful.
+
+Can you think of alternative scenarios where this type of model could be used, which would impose stricter or more lax requirements for its predictive performance?  The goal here is to prompt you to consider some "bigger picture" aspects that would impact the utility of any particular model -- there is no right or wrong answer to this question too, but please do present some kind of summary of your thoughts on this topic (a couple of sentences would suffice, no need for an assay).
+
+**Answer:**
+
+If this model were used to monitor room occupancy for security purposes (e.g., detecting unauthorized access to restricted areas), the error rate would need to be extremely low (close to 0%). Similarly strict requirements would be needed for say for medical monitoring purposes.
+
+In less critical settings like home entertainment or casual lighting control in a smart hotel, a higher error rate (even up to 10-20%) could be acceptable. 
+
+# Amount of Fund Raising Contributions (points: 25/30 -- graduate/undergraduate)
+
+While the previous dataset presented an example of a *classification* problem (where we want to predict a *categorical* outcome, i.e. the class, or the group, the observation belongs to), here we consider an example of a regression problem. The data are from a direct mail campaign, and we aim at predicting dollar amount of a donors' (next) contribution (which is a number, quantitative variable), based on their demographics and history of past contributions.  This dataset is a cleaned up subset of the one used in a data mining competition back in the late 90s. That particular history and use comes with the requirement of describing data source in rather broad and non-specific terms when it is used for educational/competition purposes, so what little information is given to us, that's it.  
+
+To load data into R please use file `fund-raising.csv` available at the course website in Canvas.  Some details about the data attributes can be found in corresponding file `fund-raising-notes.txt` also available from our course website in Canvas. 
+
+* Load the data into R
+* Determine the number of variables (explain which ones are predictors -- categorical vs. continuous -- and which one is the outcome) and observations in the dataset (R functions such as `dim`, `nrow`, `ncol` could be useful for this)
+* Generate summary of the data using `summary` function in R
+* Generate pairwise XY-scatterplots of each pair of *quantitative* attributes.
+* Describe your observations and discuss which attributes might be more useful for predicting the outcome as defined in the `fund-raising-notes.txt` dataset description. 
+
+```{r p3}
+# Load the dataset
+fund_raising_data <- read.csv("fund-raising.csv")
+
+# Add column names based on the notes provided
+colnames(fund_raising_data) <- c("contrib", "gapmos", "promocontr", "mincontrib", "ncontrib", 
+                                 "maxcontrib", "lastcontr", "avecontr", "mailord", 
+                                 "mindate", "maxdate", "age", "gender")
+
+# View basic structure
+str(fund_raising_data)
+
+# Get the number of rows and columns
+dim(fund_raising_data) 
+nrow(fund_raising_data)
+ncol(fund_raising_data)
+
+# Generate summary statistics
+summary(fund_raising_data)
+```
+**answer:**
+Variables:
+
+Categorical: gender
+Continuous: gapmos, promocontr, mincontrib, ncontrib, maxcontrib, lastcontr, avecontr, mailord, age
+Target Outcome: contrib - The contribution amount ($).
+
+Note: mindate and maxdate are dates of the smallest and largest contributions and will not be used here. Gender is non quantitative and will also not show on the pairwise plots.
+
+```{r p3.2}
+# Generate pairwise scatterplots
+pairs(fund_raising_data[, c("contrib","gapmos", "promocontr", "mincontrib", "ncontrib", "maxcontrib", "lastcontr", "avecontr", "mailord", "age")],
+      main = "Pairwise Scatterplots of Quantitative Variables",
+      pch = 20, col = "blue")
+```
+
+Try being creative: visualizing and discussing potential associations between each of individual (quantitative/continuous) predictor variables and the continuous outcome is relatively straightforward. But this time around you cannot really use the outcome to stratify the points in the *pairwise* predictor-predictor scatterplots same way we did it in Problem 1: in the latter we had just four possible values of the (categorical) outcome, but now the outcome (donor contribution) is a (potentially continuous) number. There is a finite number of distinct values in each finite-sized dataset, of course, but how many such distinct values are there? Do the plots make much sense and are they even interpretable if you use all those distinct values of contributed amount, as they are? Is there a way around this?
+
+**answer:**
+
+A workaround could be to bin the contribution amounts into quantiles or ranges and stratify the scatterplots based on these bins. Also pairwise scatterplots show trends, but more advanced techniques like correlation matrices or heatmaps could further quantify the relationships, which I have done below. Multi-factor regression may also ultimately make sense here.
+
+From the correlation heatmap, it is made shown much more clearly that min/max/average/last contributions are most closely correlated with the actual contribution, which makes sense by definition. These may be used to predict future contributions (e.g. last most recent contribution may be indicative of the next contribution, etc.).
+
+```{r p3 correlation matrix}
+
+# Select quantitative variables
+quant_vars <- fund_raising_data[, c("contrib", "gapmos", "promocontr", "mincontrib", 
+                            "ncontrib", "maxcontrib", "lastcontr", "avecontr", 
+                            "mailord", "age")]
+
+# Compute the correlation matrix
+cor_matrix <- cor(quant_vars)
+
+# Reshape the correlation matrix into a long format
+library(reshape2)
+cor_melted <- melt(cor_matrix)
+
+# Plot the heatmap
+ggplot(cor_melted, aes(Var1, Var2, fill=value)) +
+  geom_tile() +
+  scale_fill_gradient2(low="blue", high="red", mid="white", 
+                       midpoint=0, limit=c(-1,1), space="Lab", 
+                       name="Correlation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle=45, vjust=1, 
+                                   size=12, hjust=1)) +
+  labs(title="Correlation Matrix Heatmap", x="", y="")
+
+```
+
+# Boxplots on Fund Raising dataset (points: 5/5(extra) -- graduate/undergraduate)
+
+Study the potential relationships between quantitative and *categorical* predictors in the fund raising dataset you have evaluated above by generating boxplots. No need to generate full set of boxplots for each quantitative/categorical pair, just a few would do (describe your observations in a couple of sentences though).
+
+```{r p4}
+# Boxplot of contribution amount by gender
+ggplot(fund_raising_data, aes(x=gender, y=contrib)) +
+  geom_boxplot() +
+  labs(title = "Contribution Amount by Gender", x = "Gender", y = "Contribution Amount")
+
+# Boxplot of total number of contributions by gender
+ggplot(fund_raising_data, aes(x=gender, y=ncontrib)) +
+  geom_boxplot() +
+  labs(title = "Total Number of Contributions by Gender", x = "Gender", y = "Total Number of Contributions")
+
+# Boxplot of average contribution by gender
+ggplot(fund_raising_data, aes(x=gender, y=avecontr)) +
+  geom_boxplot() +
+  labs(title = "Average Contribution by Gender", x = "Gender", y = "Average Contribution")
+```
+**answer:**
+
+The interquartile range (IQR) for contribution amount by all genders is narrow, indicating that most contributions fall within a small range for each gender. Some extreme outliers in male and U (unknown) exist. Overall, gender doesn’t seem to strongly differentiate contribution amounts.
+
+The total number of contributions also seems fairly consistent across genders, with the median and IQR being similar for females, males, and the unknown category. More outliers in the female category this time.
+
+The distribution of average contributions shows that the median values for all genders are similar, but again, there are more outliers for females (F) and males (M), indicating some variability in higher contributions.
+
+Overall, from the boxplots, gender does not seem to have a significant influence on contribution behaviors (amount, total contributions, or average contributions). The distributions are quite similar across genders, with some variability in the form of outliers, but no drastic differences in the central tendency or spread of the data. This suggests gender alone might not be a strong predictor.
+
+
+# Tibbles (extra points: 5/5 -- graduate/undergraduate)
+
+Fluency in R (as any other programming language) involves ability to look up, understand, and put to use as necessary new functionality that has not been explored before.  One of more recent additions to R are so-called *tibbles* that can be seen as ["modern take on data frames"](https://cran.r-project.org/web/packages/tibble/vignettes/tibble.html).  
+
+To earn extra points offered by this problem, please look up tibble use and contrast their behavior to that of conventional data frame using one of the datasets you have already created above.  To earn all points available your solution must include *more than one* example of substantive differences (same kind of difference illustrated by two datasets counts as *one example*).  
+
+Please also comment (briefly is fine) on why the use of tibbles may result in more robust code (or not, it's fine if you happen to find tibbles to be in fact clunkier and not resulting in cleaner code - but you have to argue your point, either way).
+
+```{r p5}
+library(tibble)
+
+# Convert the data frame to a tibble
+fund_tibble <- as_tibble(fund_raising_data)
+```
+```{r p5.1}
+# Printing the original data frame will display all rows/columns
+# Here am printing first 15 to save space
+head(fund_raising_data, 15)
+
+# Print the tibble (displays a preview of the data)
+print(fund_tibble)
+```
+
+```{r p5.2}
+# Subsetting with data frame
+df_subset <- fund_raising_data[, "contrib"]
+print(class(df_subset))  # outputs 'numeric'
+
+# Subsetting with tibble
+tibble_subset <- fund_tibble[, "contrib"]
+print(class(tibble_subset))  # outputs 'tbl_df' (still a tibble)
+```
+
+**answers:**
+
+Example 1: Data frames will print all rows and columns when you print the object (not fully shown as it would take up thousands of rows of output space), which can be overwhelming for large datasets.Tibbles, on the other hand, print only the first 10 rows and will show only the number of columns that fit on your screen by default. This makes them more readable when working interactively.
+
+Example 2: In data frames, if you subset a single column using [], it returns a vector. In contrast, tibbles return a tibble (still preserving the tibble structure). This distinction can help prevent errors when you expect a certain data structure in your code.
+
+Overall, Tibbles provide a more user-friendly and robust alternative to traditional data frames, especially for interactive work and exploratory data analysis. Their print behavior, consistent subsetting, and error handling (say, accessing a non-existing column throws an error vs returning null for dataframes) make them more reliable for preventing common mistakes in data manipulation. 

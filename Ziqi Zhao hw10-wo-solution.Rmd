@@ -1,0 +1,389 @@
+---
+title: "Ziqi Zhao CSCI E-63C Week 10 Problem Set"
+output:
+  html_document:
+    toc: true
+---
+
+# Preface
+
+For this week problem set we will use WiFi localization data (the one we worked with on week 2) to fit logistic regression model and evaluate performance of LDA, QDA and KNN classifiers.  As we have seen earlier this dataset should allow to locate phones fairly well by relying on the strength of WiFi signal, so we should expect to see fairly low error rates for our classifiers.  Let's see whether some of those classifiers perform better than others on this data.
+
+**Important note:** *For the purposes of all problems in this week problem set, we will be predicting whether the phone is at location=3 or not, as opposed to working with multi-class predictor.  In other words, before you proceed with any of the problems in this assignment, please convert the four-levels outcome to the outcome with only two levels: location=3 (must be 500 of those) and not (must be 1500 of them).*
+
+*If you are creating a new column containing this binary outcome, please make sure that the original outcome with four columns is NOT used inadvertently as one of the predictors.  If you are getting invariably 100% accuracy regardless of the choice of the method or split of the data into training and test, chances are your code is using original four-levels outcome as a predictor.*
+
+# Problem 1: logistic regression (points: 10/20 – graduate/undergraduate)
+
+Fit logistic regression model of the binary categorical outcome (location=3 or not) using seven WiFi signals strengths as predictors in the model.  Produce summary of the model, describe which attributes appear to be significantly associated with the categorical outcome in this model.  Use this model to make predictions on the entire dataset and compare these predictions and corresponding true values of the class attribute using confusion matrix (i.e. contingency table).  Calculate error rate (would this be training or test error in this case?), sensitivity and specificity (assuming that we are predicting class "location=3").  Describe the results.
+
+```{r p1}
+library(caret)
+
+# Load the dataset
+file_path <- "wifi_localization.txt"
+columns <- c("Signal1", "Signal2", "Signal3", "Signal4", "Signal5", "Signal6", "Signal7", "Location")
+data <- read.table(file_path, header = FALSE, sep = "\t", col.names = columns)
+
+# Convert the 'Location' column to a binary outcome
+data$BinaryLocation <- as.factor(ifelse(data$Location == 3, 1, 0))
+
+# Fit logistic regression model 
+model <- glm(BinaryLocation ~ Signal1 + Signal2 + Signal3 + Signal4 + Signal5 + Signal6 + Signal7, 
+             data = data, family = binomial)
+
+summary(model)
+
+# Make predictions on the entire dataset
+predicted_probs <- predict(model, data, type = "response")
+predicted_classes <- ifelse(predicted_probs > 0.5, 1, 0)
+
+# Evaluate the model
+confusion_mat <- confusionMatrix(as.factor(predicted_classes), data$BinaryLocation, positive = "1")
+print(confusion_mat)
+
+```
+**Discussions:**
+
+Looking at the model summary, all 7 signals seem to be significant at the 95% level as all have p<0.05.
+
+As expected, Signal3 has the largest positive coefficient (0.21847) and a highly significant p-value (<2e−16), suggesting it has the strongest positive association with the outcome. Since we are predicting for Signal 3.
+Signal5 has the largest negative coefficient (-0.13188) with a highly significant p-value (<2e−16), indicating a strong negative association with the outcome.
+
+From the confusion matrix we can calculate the error rate: Incorrect/Total Predictions = (322+115)/2000 = 0.2185. This is also confirmed as 1 - accuracy = 1-0.7815 = 0.2185.
+
+Since the model is evaluated on the entire dataset used for training, this is the training error rate, not a test error rate. A separate test set would be required to compute the test error, which was explicitly not instructed here as we were to make predictions on the entire dataset and train using the entire dataset. The test error may be higher if we did do a training and test split here.
+
+The sensitivity (True positive) rate is quite low at 0.3560 and the true negative rate is high as 0.9233 from the outputs. This seems to be expected since we are predicting for location = 3 only which only accounts for 1/4 of all locations (class imbalance), and using a logistic regression only.
+
+
+# Problem 2: LDA and QDA (points: 10/20 – graduate/undergraduate)
+
+Using LDA and QDA implementations available in the package `MASS`, fit LDA and QDA classifiers on the entire dataset and calculate confusion matrix, (training) error rate, sensitivity and specificity for each of them.  Compare them to those of logistic regression.  Describe the results.
+
+```{r p2}
+library(MASS)
+
+# Fit LDA model
+lda_model <- lda(BinaryLocation ~ Signal1 + Signal2 + Signal3 + Signal4 + Signal5 + Signal6 + Signal7, 
+                 data = data)
+
+# Predict using LDA
+lda_predictions <- predict(lda_model, data)
+lda_pred_classes <- lda_predictions$class
+
+lda_confusion_mat <- confusionMatrix(as.factor(lda_pred_classes), data$BinaryLocation, positive = "1")
+print(lda_confusion_mat)
+
+
+# Fit QDA model
+qda_model <- qda(BinaryLocation ~ Signal1 + Signal2 + Signal3 + Signal4 + Signal5 + Signal6 + Signal7, 
+                 data = data)
+
+# Predict using QDA
+qda_predictions <- predict(qda_model, data)
+qda_pred_classes <- qda_predictions$class
+
+qda_confusion_mat <- confusionMatrix(as.factor(qda_pred_classes), data$BinaryLocation, positive = "1")
+print(qda_confusion_mat)
+
+```
+
+**Discussions:**
+
+The Confusion matrices are shown above.
+
+The LDA performs similarly to the logistic regression, with an accuracy of 0.7805 (error rate of 0.2195), sensitivity of 0.3580 and specificity of 0.9213. These metrics are nearly the same. Logistic regression performs similarly to LDA, which is expected because both methods assume linear decision boundaries.
+
+On the other hand, the QDA has an accuracy of 0.9650 (error rate of 0.350), sensitivity of 0.8820 and specificity of 0.9927, which is much better performing than the LDA and logistic regression with only 3.5% error rate.
+
+QDA outperforms logistic regression in both sensitivity and specificity, likely due to its ability to model non-linear relationships. However, it seems like it may also be prone to overfitting if the dataset is small or noisy. We don't have a validation split in this case to test this.
+
+# Problem 3: KNN (points: 10/20 – graduate/undergraduate)
+
+Using `knn` from library `class`, fit KNN classifiers for the entire dataset and calculate confusion matrix, (training) error rate, sensitivity/specificity for  $k=1$, $5$ and $25$ nearest neighbors models.  Compare them to the corresponding results from LDA, QDA and logistic regression. Describe results of this comparison and discuss whether it is surprising to see low *training* error for KNN classifier with $k=1$.
+
+```{r p3}
+library(class)
+
+# Prepare data for KNN
+X <- data[, c("Signal1", "Signal2", "Signal3", "Signal4", "Signal5", "Signal6", "Signal7")]
+y <- data$BinaryLocation
+
+# Define a function to evaluate KNN with a specific k
+evaluate_knn <- function(k) {
+  knn_predictions <- knn(train = X, test = X, cl = y, k = k) 
+  #knn_pred_classes <- knn_predictions$class
+  knn_confusion_mat <- confusionMatrix(as.factor(knn_predictions), data$BinaryLocation, positive = "1")
+
+  cat("KNN with k =", k, "\n")
+  print("Confusion Matrix:")
+  print(knn_confusion_mat)
+
+}
+
+# Evaluate KNN with different k values
+evaluate_knn(k = 1)
+evaluate_knn(k = 5)
+evaluate_knn(k = 25)
+
+
+library(knitr)
+# Printing all the results for comparsion
+# hardcoding the results is actually easier than all the referencing
+# here so I just typed out a table
+results_table <- data.frame(
+  Model = c(
+    "Logistic Regression", 
+    "LDA", 
+    "QDA", 
+    "KNN (k = 1)", 
+    "KNN (k = 5)", 
+    "KNN (k = 25)"
+  ),
+  Accuracy = c("78.15%", "78.05%", "96.50%", "100%", "99.25%", "98.15%"),
+  Sensitivity = c("35.60%", "35.80%", "88.20%", "100%", "98.80%", "98.20%"),
+  Specificity = c("92.30%", "92.13%", "99.27%", "100%", "99.40%", "98.13%")
+)
+
+kable(results_table, format = "markdown", align = "lccc", 
+      col.names = c("Model", "Accuracy", "Sensitivity", "Specificity"))
+
+```
+
+**Discussions:**
+
+The k=1 model perfectly classifies all observations in the dataset, with a 0 training error rate and 100% in all metrics. There is clearly overfitting but this is also expected since we are only looking at the nearest neighbor and using a Euclidean distance, which does not leave much room for error.
+
+As k increases the accuracy, sensitivity and specificity all decrease. This however is because 1) we are solely using the training dataset and 2) K nearest neighbors with small K does not leave much room for training error. 
+
+Comparing to the other methods KNN performs better. For KNN, it is making predictions at the time of evaluation instead of explict model training in the prior methods. It is well know that for binary classification, KNN works well when the data is structured and clean and when the decision boundary is non-linear. We also see the QDA perform a lot better than the Logistic and LDA methods, again showing the non-linearity of this particular problem.
+
+
+# Problem 4: compare test errors of logistic regression, LDA, QDA and KNN (points: 30/30(extra) – graduate/undergraduate)
+
+Using resampling approach of your choice (e.g. cross-validation, bootstrap, etc.) obtain test error as well as sensitivity and specificity for each of these methods (logistic regression, LDA, QDA, KNN with $k=1,9,57,343$).Present results in the form of boxplots, compare test error/sensitivity/specificity across these methods and discuss their relative performance.
+
+```{r p4}
+library(ggplot2)
+library(dplyr)
+library(e1071)
+
+# Define resampling control
+control <- trainControl(method = "cv", number = 12, savePredictions = "final")
+
+# Logistic Regression
+logit_model <- train(BinaryLocation ~ Signal1 + Signal2 + Signal3 + Signal4 + Signal5 + Signal6 + Signal7,
+                     data = data, method = "glm", family = "binomial", trControl = control)
+
+# LDA
+lda_model <- train(BinaryLocation ~ Signal1 + Signal2 + Signal3 + Signal4 + Signal5 + Signal6 + Signal7,
+                   data = data, method = "lda", trControl = control)
+
+# QDA
+qda_model <- train(BinaryLocation ~ Signal1 + Signal2 + Signal3 + Signal4 + Signal5 + Signal6 + Signal7,
+                   data = data, method = "qda", trControl = control)
+
+# Temporarily disable warnings just for output cleanliness
+# I get Numerical 0 probability for all classes with observation ...
+# Which should make sense since many points may have 0 probability as the prediction
+options(warn = -1)
+
+# Fit Naive Bayes model
+nb_model <- train(BinaryLocation ~ Signal1 + Signal2 + Signal3 + Signal4 + Signal5 + Signal6 + Signal7,
+                  data = data, method = "nb", trControl = control)
+
+# Re-enable warnings
+options(warn = 0)
+
+
+# Re-Define resampling control for knn to save for all k values
+control <- trainControl(
+  method = "cv",
+  number = 12,
+  savePredictions = "all", # Save predictions for all values of k
+)
+
+# KNN with multiple values of k
+knn_grid <- expand.grid(k = c(1, 9, 57, 343))
+knn_model <- train(BinaryLocation ~ Signal1 + Signal2 + Signal3 + Signal4 + Signal5 + Signal6 + Signal7,
+                   data = data, method = "knn", tuneGrid = knn_grid, trControl = control)
+
+
+# Print confusion matrices for each model
+print_confusion_matrix <- function(model, model_name) {
+  cat("\nConfusion Matrix for", model_name, ":\n")
+  predictions <- model$pred %>%
+    mutate(PredictedClass = ifelse(pred == "1", "1", "0"),
+           ActualClass = ifelse(obs == "1", "1", "0"))
+  cm <- confusionMatrix(as.factor(predictions$PredictedClass), as.factor(predictions$ActualClass), positive = "1")
+  print(cm)
+}
+
+# Print confusion matrices for KNN with all k values
+print_knn_confusion_matrices <- function(knn_model) {
+  unique_k <- unique(knn_model$pred$k) # Get all unique k values
+  for (k_val in unique_k) {
+    cat("\nConfusion Matrix for KNN (k =", k_val, "):\n")
+    predictions <- knn_model$pred %>%
+      filter(k == k_val) %>% # Filter predictions for the specific k value
+      mutate(
+        PredictedClass = ifelse(pred == "1", "1", "0"),
+        ActualClass = ifelse(obs == "1", "1", "0")
+      )
+    cm <- confusionMatrix(as.factor(predictions$PredictedClass), as.factor(predictions$ActualClass), positive = "1")
+    print(cm)
+  }
+}
+
+# Print confusion matrices for Logistic Regression, LDA, QDA
+print_confusion_matrix(logit_model, "Logistic Regression")
+print_confusion_matrix(lda_model, "LDA")
+print_confusion_matrix(qda_model, "QDA")
+print_confusion_matrix(nb_model, "Naive_Bayes")
+
+# Print confusion matrices for each KNN (k = 1, 9, 57, 343)
+print_knn_confusion_matrices(knn_model)
+
+```
+```{r p4.2, fig.width=12,fig.height=4}
+
+library(tidyr)
+
+# Extract metrics from resampling results
+extract_metrics <- function(model, model_name) {
+  predictions <- model$pred %>%
+    mutate(
+      PredictedClass = ifelse(pred == "1", "1", "0"),
+      ActualClass = ifelse(obs == "1", "1", "0")
+    )
+  
+  metrics <- predictions %>%
+    group_by(Resample) %>%
+    summarise(
+      Accuracy = mean(PredictedClass == ActualClass),
+      TestError = 1 - mean(PredictedClass == ActualClass),
+      Sensitivity = sum(PredictedClass == "1" & ActualClass == "1") / sum(ActualClass == "1"),
+      Specificity = sum(PredictedClass == "0" & ActualClass == "0") / sum(ActualClass == "0")
+    ) %>%
+    mutate(Model = model_name)
+  
+  return(metrics)
+}
+
+# Compile metrics for all models
+logit_metrics <- extract_metrics(logit_model, "Logistic Regression")
+lda_metrics <- extract_metrics(lda_model, "LDA")
+qda_metrics <- extract_metrics(qda_model, "QDA")
+nb_metrics <- extract_metrics(nb_model, "Naive_Bayes")
+
+# Extract metrics for KNN with all k values
+knn_metrics <- knn_model$pred %>%
+  mutate(
+    PredictedClass = ifelse(pred == "1", "1", "0"),
+    ActualClass = ifelse(obs == "1", "1", "0")
+  ) %>%
+  group_by(Resample, k) %>%
+  summarise(
+    Accuracy = mean(PredictedClass == ActualClass),
+    TestError = 1 - mean(PredictedClass == ActualClass),
+    Sensitivity = sum(PredictedClass == "1" & ActualClass == "1") / sum(ActualClass == "1"),
+    Specificity = sum(PredictedClass == "0" & ActualClass == "0") / sum(ActualClass == "0"),
+    .groups = "drop"
+  ) %>%
+  mutate(Model = paste0("KNN (k = ", k, ")")) 
+
+# Combine all metrics into one data frame and reshape for plot
+all_metrics <- bind_rows(logit_metrics, lda_metrics, qda_metrics, nb_metrics, knn_metrics)
+
+metrics_long <- all_metrics %>%
+  pivot_longer(cols = c(TestError, Sensitivity, Specificity), names_to = "Metric", values_to = "Value")
+
+# Plot the metrics
+ggplot(metrics_long, aes(x = Model, y = Value, fill = Model)) +
+  geom_boxplot() +
+  facet_wrap(~ Metric, scales = "free_y") +
+  labs(title = "Comparison of Test Error, Sensitivity, and Specificity",
+       y = "Value", x = "Model") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+**Discussions:**
+
+The resampled methods showed similar metrics overall to the metrics seen prior. There are no major differences in accuracy, sensitivity, specificity, and error rate between the resampled and original methods. KNN, QDA, (and Naive Bayes!) Still does best in all of these metrics.
+
+Cross-validation is used to re-sample the dataset into training and validation folds multiple times. So we do see that for example, KNN (k=1), which achieved 100% accuracy without resampling, now shows more realistic performance due to proper validation, but still holds a 0.987 high accuracy rate.
+
+Models like Logistic Regression and LDA exhibit relatively stable results, showing that their performance remains consistent across resampling iterations. This may be somewhat surprising but given the low sensitivity anyway may make sense.
+
+# Extra points problem I: Naive Bayes classifier (points: 5(extra)/5(extra) – graduate/undergraduate)
+
+Fit naive Bayes classifier (see lecture slides for examples of using `naiveBayes` function from package `e1071`) to the WiFi localization dataset with binary (location=3 or not) outcome and assess its performance on test data by resampling along with logistic regression, LDA, QDA and KNN in the Problem 4 above.
+
+Please see Problem 4 as I have added naives Bayes in. Naive Bayes perforned competitively with an accuracy of 0.9805, sensitivity of 0.9760, and specificity of 0.9820, indicating its suitability for this dataset where class independence holds.
+
+# Extra points problem II: interaction terms in logistic regression (points: 10(extra)/10(extra) – graduate/undergraduate)
+
+Add pairwise interaction terms to the logistic regression model fit in the Problem 1 above *and* evaluate the impact of their addition on training **and** test error.  You can add all pairwise interaction terms or a subset of them, in which case the rationale behind selecting such a subset has to be described in your solution.
+
+```{r p6}
+
+# Create interaction terms for all signals
+interaction_terms <- paste0("Signal", 1:7, ":", "Signal", 1:7)
+interaction_formula <- paste0("BinaryLocation ~ (", paste(paste0("Signal", 1:7), collapse = " + "), ")^2")
+
+# Fit logistic regression model with interaction terms
+interaction_model <- glm(as.formula(interaction_formula),
+                         data = data, family = "binomial")
+
+summary(interaction_model)
+
+# Make predictions on the entire dataset for training (similar to before)
+interaction_predicted_probs <- predict(interaction_model, data, type = "response")
+interaction_predicted_classes <- ifelse(interaction_predicted_probs > 0.5, 1, 0)
+interaction_confusion_mat <- confusionMatrix(as.factor(interaction_predicted_classes),
+                                             data$BinaryLocation, positive = "1")
+cat("Confusion Matrix for Training Data:\n")
+print(interaction_confusion_mat)
+
+
+# Split the data into training and testing sets (For test)
+set.seed(123)
+train_indices <- createDataPartition(data$BinaryLocation, p = 0.7, list = FALSE)
+train_data <- data[train_indices, ]
+test_data <- data[-train_indices, ]
+
+# Fit logistic regression model with interaction terms on training data
+train_interaction_model <- glm(as.formula(interaction_formula),
+                               data = train_data, family = "binomial")
+
+# Make predictions on the test dataset
+test_interaction_predicted_probs <- predict(train_interaction_model, test_data, type = "response")
+test_interaction_predicted_classes <- ifelse(test_interaction_predicted_probs > 0.5, 1, 0)
+
+# Evaluate the model using the test dataset
+test_interaction_confusion_mat <- confusionMatrix(as.factor(test_interaction_predicted_classes),
+                                                  test_data$BinaryLocation, positive = "1")
+cat("\nConfusion Matrix for Test Data:\n")
+print(test_interaction_confusion_mat)
+
+
+# Output and compare the impact of adding interaction terms
+cat("\nComparison of Training and Test Errors:")
+cat("\nTraining Accuracy:", interaction_confusion_mat$overall['Accuracy'])
+cat("\nTest Accuracy:", test_interaction_confusion_mat$overall['Accuracy'])
+cat("\nTraining Sensitivity:", interaction_confusion_mat$byClass['Sensitivity'])
+cat("\nTest Sensitivity:", test_interaction_confusion_mat$byClass['Sensitivity'])
+cat("\nTraining Specificity:", interaction_confusion_mat$byClass['Specificity'])
+cat("\nTest Specificity:", test_interaction_confusion_mat$byClass['Specificity'])
+
+
+```
+**Discussions:**
+
+After adding pairwise interaction terms, the model's performance has significantly improved to 96%+ for all of accuracy/sensitivity/specificity, especially in sensitivity. This improvement suggests that the interactions between Wi-Fi signal strengths (e.g., Signal1:Signal2) are meaningful predictors of the binary outcome.
+
+The balanced performance between training and test datasets implies the model is not overfitting despite the addition of numerous interaction terms. This may be easier for binary classification than an actual linear model.
+
+In Problem 1, the model had limited sensitivity because it relied solely on linear combinations of individual predictors. By incorporating interaction terms, the model captures non-linear and combinatory effects, significantly enhancing its ability to predict location = 3. While high sensitivity is desirable, its validity depends on the problem domain and the balance between sensitivity and specificity. Here, the specificity remains high, indicating the model retains a good balance between detecting positives and avoiding false positives and is also robust to a test set.
